@@ -369,12 +369,12 @@ async def arrivals_cmd(message: Message, session_factory):
         await arrive_expeditions(session)
         rows=(await session.scalars(select(WarExpedition).where(WarExpedition.attacker_lord_id==lord.id,WarExpedition.status=="arrived").order_by(WarExpedition.id.desc()))).all()
     if not rows: await message.answer("لشکر رسیده‌ای نداری.");return
-    await message.answer("لشکرهای رسیده:\n"+"\n".join(f"#{x.id} → قلعه مقصد {x.target_castle_id} | انتخاب: /arrival {x.id} garrison|alliance|transfer|deploy" for x in rows))
+    await message.answer("لشکرهای رسیده:\n"+"\n".join(f"#{x.id} → قلعه مقصد {x.target_castle_id} | ابتدا /warcommand {x.id} deploy و سپس /arrival {x.id} garrison|alliance|transfer" for x in rows))
 
 @router.message(Command("arrival"))
 async def arrival_choice_cmd(message: Message, session_factory):
     p=(message.text or "").split()
-    if len(p)!=3: await message.answer("فرمت: /arrival شناسه garrison|alliance|transfer|deploy");return
+    if len(p)!=3: await message.answer("فرمت: /arrival شناسه garrison|alliance|transfer (پس از دستور /warcommand شناسه deploy)");return
     try:
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
