@@ -27,6 +27,6 @@
 - Added PostgreSQL 16 CI covering migrations, ORM schema contract, imports, and unit tests.
 - Hardened admin login with persistent failed-attempt lockout and fail-fast configuration checks.
 - Hardened trade rules and food-debt credit; added overdue debt casualties and siege restrictions.
-- Hardened expedition ownership, sea port checks, two-step deployment, transfer inventory handling, and timeout cancellation/asset return.
+- Hardened expedition ownership, sea port checks, two-step deployment, transfer inventory handling, and timeout cancellation with immediate asset return.
 - Validated castle registration against the official castle/region/house catalog and supported multi-word castle names in commands.
 - Removed tracked `.env` and Python bytecode artifacts.
