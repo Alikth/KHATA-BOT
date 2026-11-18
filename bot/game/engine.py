@@ -110,8 +110,14 @@ async def advance_world_clock(session: AsyncSession, reset_real_tick: bool=False
 async def weekly_settlement(session: AsyncSession, force: bool=False):
     """Settle one world week once per castle using the website's production/upkeep formula."""
     state=await session.get(GameState,"world")
-    if state and state.value.get("paused",True): return {"paused":True,"processed":0}
+    if state is None or bool((state.value or {}).get("paused",True)):
+        return {"paused":True,"processed":0}
     now=await advance_world_clock(session)
+    # advance_world_clock may initialize a missing state as paused; never settle
+    # the first week until an administrator explicitly resumes the world.
+    state=await session.get(GameState,"world")
+    if state is None or bool((state.value or {}).get("paused",True)):
+        return {"paused":True,"processed":0}
     week=f"{now.isocalendar().year}-W{now.isocalendar().week:02d}"
     castles=(await session.scalars(select(Castle).where(Castle.active.is_(True)))).all(); processed=0
     for castle in castles:
