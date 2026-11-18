@@ -7,7 +7,7 @@ from bot.config import get_settings
 from bot.database.session import make_engine, make_session_factory
 from sqlalchemy import text
 from bot import handlers
-from bot.game.engine import weekly_settlement, advance_world_clock
+from bot.game.engine import weekly_settlement, advance_world_clock, settle_expired_food_debts
 
 async def main():
     cfg = get_settings()
@@ -64,6 +64,9 @@ async def main():
         while True:
             try:
                 async with session_factory() as session, session.begin():
+                    debt_result = await settle_expired_food_debts(session)
+                    if debt_result.get("processed"):
+                        logging.info("Expired food debts settled for %s castles", debt_result["processed"])
                     result = await weekly_settlement(session)
                     if result.get("processed"):
                         logging.info("Weekly settlement processed %s castles (%s)", result["processed"], result.get("week"))
