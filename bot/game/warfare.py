@@ -122,8 +122,9 @@ async def arrive_expeditions(session: AsyncSession):
     ).with_for_update())).all()
     for row in rows: row.status="arrived"
 
-    # A force left without an attack/siege command or a final deploy choice
-    # automatically starts its return trip after the site's 90-minute window.
+    # The site cancels an expedition immediately after the 90-minute command
+    # window expires and restores its assets to the origin (it does not send a
+    # second return journey).
     expired=(await session.scalars(select(WarExpedition).where(
         WarExpedition.status=="arrived",
         WarExpedition.arrival_at<=now-timedelta(minutes=90),
@@ -131,9 +132,27 @@ async def arrive_expeditions(session: AsyncSession):
         or_(WarExpedition.command.is_(None),WarExpedition.command=="deploy")
     ).with_for_update())).all()
     for row in expired:
-        duration=(row.arrival_at-row.launched_at) if row.arrival_at and row.launched_at else timedelta(hours=1)
-        row.status="returning"
-        row.return_at=now+max(duration,timedelta(minutes=1))
+        for kind,items in (row.assets or row.units).items():
+            if kind not in ASSET_MODELS: continue
+            model,field=ASSET_MODELS[kind]
+            for key,nraw in items.items():
+                n=int(nraw)
+                if n<=0: continue
+                if row.asset_origin=="garrison":
+                    asset=await _asset_row(session,row.origin_castle_id,kind,key,row.attacker_lord_id)
+                    if asset: asset.count+=n
+                    else: session.add(GarrisonAsset(castle_id=row.origin_castle_id,owner_lord_id=row.attacker_lord_id,asset_kind=kind,asset_key=key,count=n))
+                else:
+                    asset=await session.scalar(select(model).where(
+                        model.castle_id==row.origin_castle_id,getattr(model,field)==key
+                    ).with_for_update())
+                    if asset: asset.count+=n
+                    else: session.add(model(castle_id=row.origin_castle_id,**{field:key},count=n))
+        row.status="cancelled"
+        row.cancelled_at=now
+        result=dict(row.result or {})
+        result["auto_cancelled"]="command_timeout"
+        row.result=result
     return rows
 
 async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lord, choice: str):
