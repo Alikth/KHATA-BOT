@@ -224,21 +224,42 @@ async def review_battle(session: AsyncSession, expedition_id: int, outcome: str,
     row=await session.scalar(select(WarExpedition).where(WarExpedition.id==expedition_id).with_for_update())
     if not row or row.command not in ("attack","siege") or row.outcome: raise ValueError("نبرد برای داوری آماده نیست یا قبلاً نهایی شده است.")
     if outcome not in ("attacker","defender"): raise ValueError("نتیجه باید attacker یا defender باشد.")
+    if not isinstance(attacker_losses,dict) or not isinstance(defender_losses,dict):
+        raise ValueError("ساختار تلفات مهاجم و مدافع باید شیء JSON باشد.")
     attacker_lord=await session.get(Lord,row.attacker_lord_id)
     defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
     if not defender: raise ValueError("لرد مدافع پیدا نشد.")
     snapshot=row.assets or row.units
-    # Site allows attacker losses for army/equipment/fleet, while defender losses are army units.
-    normalized={k:(v if isinstance(v,dict) else {"army":v}) for k,v in attacker_losses.items()}
+    # Accept both structured JSON (army/equipment/fleet) and legacy flat army maps.
+    normalized={"army":{},"equipment":{},"fleet":{}}
+    for kind,values in attacker_losses.items():
+        if kind in ASSET_MODELS:
+            if not isinstance(values,dict): raise ValueError(f"ساختار تلفات {kind} نامعتبر است.")
+            normalized[kind].update(values)
+        else:
+            if isinstance(values,dict): raise ValueError(f"نوع دارایی مهاجم نامعتبر است: {kind}")
+            normalized["army"][kind]=values
     for kind in ("army","equipment","fleet"):
-        losses=normalized.get(kind,{})
+        losses=normalized[kind]
         brought=snapshot.get(kind,{})
         for key,nraw in losses.items():
-            n=int(nraw); available=int(brought.get(key,0))
+            try:
+                n=int(nraw)
+                if isinstance(nraw,bool) or float(nraw)!=n: raise ValueError
+            except (TypeError,ValueError,OverflowError):
+                raise ValueError(f"تلفات مهاجم برای {kind}/{key} باید عدد صحیح باشد.")
+            if key not in brought: raise ValueError(f"واحد یا دارایی مهاجم نامعتبر است: {kind}/{key}")
+            available=int(brought[key])
             if n<0 or n>available: raise ValueError(f"تلفات مهاجم برای {kind}/{key} خارج از موجودی است.")
     defender_snapshot=(row.defender_assets or {}).get("army",{})
     for key,nraw in defender_losses.items():
-        n=int(nraw); available=int(defender_snapshot.get(key,0))
+        try:
+            n=int(nraw)
+            if isinstance(nraw,bool) or float(nraw)!=n: raise ValueError
+        except (TypeError,ValueError,OverflowError):
+            raise ValueError(f"تلفات مدافع برای {key} باید عدد صحیح باشد.")
+        if key not in defender_snapshot: raise ValueError(f"واحد مدافع نامعتبر است: {key}")
+        available=int(defender_snapshot[key])
         if n<0 or n>available: raise ValueError(f"تلفات مدافع برای {key} خارج از موجودی است.")
         if n:
             army=await session.scalar(select(ArmyUnit).where(ArmyUnit.castle_id==row.target_castle_id,ArmyUnit.unit_key==key).with_for_update())
