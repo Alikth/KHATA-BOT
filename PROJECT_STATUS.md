@@ -1,20 +1,25 @@
-# Project status
+# وضعیت پروژه KHATA-GAMES Telegram Bot
 
-## Phase 1 scaffold
-- [x] Separate project directory and repository-ready structure
-- [x] PostgreSQL schema draft and initial SQL migration
-- [x] Initial SQLAlchemy models for core persistence entities
-- [x] Environment template and Windows setup/start scripts
-- [x] Initial test plan and schema contract tests
+## اصلاحات ثبت‌شده در شاخه fix/core-stability
+- [x] مهاجرت SQL شماره ۳ برای ۹ جدول مدل‌های ORM که در مهاجرت‌های قبلی نبودند.
+- [x] حذف ساخت خودکار جدول‌ها با create_all از شروع ربات و الزام schema version 3.
+- [x] رفع import کاتالوگ تجهیزات.
+- [x] اصلاح توقف تسویه هفتگی در جهان متوقف و برخی قواعد بدهی غذا/محاصره.
+- [x] کنترل مالکیت قلعه مبدأ و مقصد بندر در لشکرکشی دریایی.
+- [x] اصلاح پذیرش انتقال نیرو به موجودی عادی قلعه گیرنده.
+- [x] الزام دستور deploy قبل از انتخاب مقصد استقرار.
+- [x] محدودیت تجارت رعیت، سقف پیشنهادهای در انتظار، قفل تجارت هنگام جنگ و تسویه بدهی غذا هنگام دریافت غذا.
+- [x] افزودن runner مهاجرت، بکاپ PostgreSQL با بررسی آرشیو و بازیابی محافظت‌شده به دیتابیس خالی.
+- [x] افزودن CI با PostgreSQL 16 برای اجرای مهاجرت‌ها و تطبیق جدول‌ها/ستون‌ها با ORM.
+- [x] حذف .env و bytecode کامپایل‌شده از شاخه.
 
-## Not yet complete
-- [ ] Create a new private GitHub repository and push this project
-- [ ] Run tests in a configured Python environment
-- [ ] Run migrations against a disposable PostgreSQL instance
-- [ ] Complete domain model from all transferable website rules
-- [ ] Implement robust pause/resume world clock
-- [ ] Implement backup, restore verification and off-device backup
-- [ ] Implement bot handlers and admin workflows
-- [ ] Implement complete game logic and regression suite
+## هنوز تأیید نشده / مانع انتشار
+- [ ] موفقیت کامل GitHub Actions و تست PostgreSQL روی commit نهایی.
+- [ ] اجرای بازیابی آزمایشی از بکاپ روی دیتابیس جداگانه.
+- [ ] تست رفتاری چندقلعه‌ای برای جنگ، تجارت، اقتصاد، محاصره و انتقال نیرو.
+- [ ] تکمیل تمام قواعد سایت؛ از جمله بدهی سررسیدگذشته و تلفات، بازگشت خودکار لشکر، تمام قفل‌های مستقل و اعلان‌ها.
+- [ ] بررسی نهایی امنیت پنل مدیر، محدودیت تلاش ورود و نشست‌های پایدار.
+- [ ] تست واقعی Telegram Bot API و استقرار 24/7 روی VPS.
 
-This scaffold is not production-ready. It must not be used with real player assets yet.
+## وضعیت انتشار
+این شاخه یک بسته اصلاحات پایداری و CI است، نه گواهی برابری کامل با سایت و نه نسخه آماده برای دارایی بازیکنان واقعی. تا سبزشدن CI، تست بازیابی و تست رفتاری، روی دیتابیس اصلی یا گروه عمومی اجرا نشود.
