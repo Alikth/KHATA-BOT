@@ -44,9 +44,10 @@ async def main():
     dp.include_router(handlers.router)
     dp["session_factory"] = session_factory
     async def war_arrival_worker():
+        from datetime import datetime, timedelta, timezone
         from sqlalchemy import select
         from bot.game.warfare import arrive_expeditions
-        from bot.database.models import Castle, GroupRegistration
+        from bot.database.models import Castle, GroupRegistration, Lord, WarExpedition
         while True:
             try:
                 notices=[]
@@ -56,11 +57,29 @@ async def main():
                         origin=await session.get(Castle,row.origin_castle_id)
                         target=await session.get(Castle,row.target_castle_id)
                         groups=(await session.scalars(select(GroupRegistration).where(GroupRegistration.castle_id.in_([row.origin_castle_id,row.target_castle_id]),GroupRegistration.enabled.is_(True)))).all()
-                        text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nمهاجم باید دستور بعدی را ثبت کند."
-                        notices.extend((g.telegram_chat_id,text) for g in groups)
+                        notice=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nمهاجم باید دستور بعدی را ثبت کند."
+                        notices.extend((g.telegram_chat_id,notice) for g in groups)
+                    cutoff=datetime.now(timezone.utc)-timedelta(hours=1)
+                    expired=(await session.scalars(select(WarExpedition).where(
+                        WarExpedition.status=="cancelled",WarExpedition.cancelled_at>=cutoff
+                    ).with_for_update())).all()
+                    for row in expired:
+                        result=dict(row.result or {})
+                        if result.get("auto_cancelled")!="command_timeout" or result.get("auto_cancelled_notified"):
+                            continue
+                        origin=await session.get(Castle,row.origin_castle_id)
+                        group=await session.scalar(select(GroupRegistration).where(
+                            GroupRegistration.castle_id==row.origin_castle_id,
+                            GroupRegistration.enabled.is_(True)
+                        ))
+                        if group:
+                            notices.append((group.telegram_chat_id,
+                                f"⏱ لشکرکشی #{row.id} به‌دلیل ثبت‌نشدن دستور در مهلت ۹۰ دقیقه‌ای خودکار لغو شد؛ نیروها به {origin.name} بازگشتند."))
+                        result["auto_cancelled_notified"]=True
+                        row.result=result
                 for chat_id,notice in notices:
                     try: await bot.send_message(chat_id,notice)
-                    except Exception: logging.exception("Could not publish war arrival to chat %s",chat_id)
+                    except Exception: logging.exception("Could not publish war notice to chat %s",chat_id)
             except Exception:
                 logging.exception("War arrival worker failed")
             await asyncio.sleep(15)
