@@ -2,7 +2,6 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from bot.config import get_settings
 from bot.database.session import make_engine, make_session_factory
 from sqlalchemy import text
@@ -34,7 +33,7 @@ async def main():
             else:
                 # Deliberately discard offline wall-clock time: the world pauses while the host is off.
                 await advance_world_clock(session, reset_real_tick=True)
-    bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(cfg.bot_token, default=DefaultBotProperties())
     dp = Dispatcher()
     dp.include_router(handlers.router)
     dp["session_factory"] = session_factory
