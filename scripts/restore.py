@@ -27,7 +27,8 @@ def connection_parts(raw: str) -> dict[str, str]:
 
 
 async def ensure_empty_and_verify(target: str, before: bool) -> None:
-    target = target.replace("postgresql+asyncpg://", "postgresql://", 1)\n    conn = await asyncpg.connect(target)
+    target = target.replace("postgresql+asyncpg://", "postgresql://", 1)
+    conn = await asyncpg.connect(target)
     try:
         if before:
             count = await conn.fetchval(
