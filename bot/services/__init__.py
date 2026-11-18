@@ -1,7 +1,7 @@
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import Lord, ResourceBalance, TradeOffer, AdminAuditLog, GameState, Castle, GroupRegistration, CastleEconomyState, WarExpedition
-from bot.game.engine import initialize_castle, STARTING_RESOURCES
+from bot.game.engine import initialize_castle, STARTING_RESOURCES, CATALOG
 
 # Resource names follow the source website's game-rules.js vocabulary.
 RESOURCE_NAMES = {
@@ -22,6 +22,14 @@ async def create_castle_group(session: AsyncSession, chat_id: int, title: str, c
         raise ValueError("ثبت قلعه فقط از داخل گروه یا سوپرگروه تلگرام ممکن است.")
     if await get_group(session, chat_id):
         raise ValueError("این گروه قبلاً به یک قلعه متصل شده است.")
+    site_castle = next(
+        ((zone["region"], item["house"]) for zone in CATALOG["houses"] for item in zone["castles"] if item["castle"] == castle_name),
+        None,
+    )
+    if not site_castle:
+        raise ValueError("نام قلعه در فهرست رسمی بازی وجود ندارد.")
+    if (region, house) != site_castle:
+        raise ValueError(f"منطقه و خاندان این قلعه باید دقیقاً «{site_castle[0]}» و «{site_castle[1]}» باشد.")
     castle = await session.scalar(select(Castle).where(Castle.name == castle_name))
     if castle:
         raise ValueError("این قلعه قبلاً به گروه دیگری اختصاص داده شده است.")
