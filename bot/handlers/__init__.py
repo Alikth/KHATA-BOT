@@ -70,6 +70,8 @@ async def register_castle(message: Message, session_factory):
     cfg = get_settings()
     if not message.from_user or message.from_user.id != cfg.bot_owner_id:
         await message.answer("فقط مالک اصلی می‌تواند گروه قلعه را ثبت کند."); return
+    if not message.chat or message.chat.type not in ("group", "supergroup"):
+        await message.answer("ثبت قلعه باید داخل گروه تلگرام انجام شود."); return
     # /registercastle Castle Name | Region | House
     raw = (message.text or "").partition(" ")[2]
     parts = [x.strip() for x in raw.split("|")]
@@ -77,7 +79,7 @@ async def register_castle(message: Message, session_factory):
         await message.answer("فرمت: /registercastle نام قلعه | منطقه | خاندان"); return
     async with session_factory() as session, session.begin():
         try:
-            castle, _ = await create_castle_group(session, message.chat.id, message.chat.title or "Castle Group", parts[0], parts[1], parts[2], cfg.bot_owner_id)
+            castle, _ = await create_castle_group(session, message.chat.id, message.chat.title or "Castle Group", parts[0], parts[1], parts[2], cfg.bot_owner_id, message.chat.type)
             await audit(session, cfg.bot_owner_id, "castle_group_registered", str(castle.id), f"chat_id={message.chat.id}")
         except ValueError as exc:
             await message.answer(str(exc)); return
