@@ -1,0 +1,60 @@
+name: Bot CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: khata_test
+          POSTGRES_USER: khata
+          POSTGRES_PASSWORD: khata_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U khata -d khata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://khata:khata_test_password@localhost:5432/khata_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Compile Python sources
+        run: python -m compileall -q bot tests
+      - name: Apply migrations to disposable PostgreSQL
+        run: |
+          python - <<'PY'
+          import os, asyncio, asyncpg
+          async def main():
+              conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"])
+              try:
+                  for path in (
+                      "bot/database/migrations/0001_initial.sql",
+                      "bot/database/migrations/0002_warfare_trade_parity.sql",
+                      "bot/database/migrations/0003_missing_model_tables.sql",
+                  ):
+                      await conn.execute(open(path, encoding="utf-8").read())
+                  version = await conn.fetchval("SELECT MAX(version) FROM schema_version")
+                  assert version == 3, f"expected schema version 3, got {version}"
+              finally:
+                  await conn.close()
+          asyncio.run(main())
+          PY
+      - name: Run tests
+        run: pytest -q
