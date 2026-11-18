@@ -54,7 +54,8 @@ async def get_balances(session: AsyncSession, lord_id: int):
 async def _assert_trade_allowed(session: AsyncSession, *lords: Lord, check_pending: bool = True):
     castle_ids = sorted({lord.castle_id for lord in lords})
     locked = await session.scalar(select(WarExpedition.id).where(
-        WarExpedition.target_castle_id.in_(castle_ids),
+        or_(WarExpedition.target_castle_id.in_(castle_ids),
+            WarExpedition.origin_castle_id.in_(castle_ids)),
         WarExpedition.status == "resolving",
         WarExpedition.command.in_(("attack", "siege"))
     ).limit(1))
