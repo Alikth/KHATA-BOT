@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import (Castle, Lord, ResourceBalance, ProductionLevel, CampLevel,
-    SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState, GameState)
+    SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState, GameState, WarExpedition)
 
 CATALOG = json.loads((Path(__file__).with_name("site_catalog.json")).read_text(encoding="utf-8"))
 RESOURCE_KEYS = CATALOG["RESOURCE_KEYS"]
@@ -124,6 +124,17 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
         econ=await session.get(CastleEconomyState,castle.id)
         if not econ: continue
         if not force and econ.last_week_key==week: continue
+        # Skip production/upkeep during an active siege, as on the website.
+        under_siege=await session.scalar(select(WarExpedition.id).where(
+            WarExpedition.target_castle_id==castle.id,
+            WarExpedition.command=="siege",
+            WarExpedition.status=="resolving",
+            WarExpedition.outcome.is_(None)
+        ).limit(1))
+        if under_siege:
+            econ.last_week_key=week
+            processed+=1
+            continue
         lords=(await session.scalars(select(Lord).where(Lord.castle_id==castle.id,Lord.status=="active"))).all()
         if not lords: econ.last_week_key=week; continue
         lord=lords[0]; changes={}
@@ -147,7 +158,14 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
             amount=int(gain)
             if key in RESOURCE_KEYS:
                 if key in ("grain","fish","meat") and econ.food_debt:
-                    pay=min(amount,econ.food_debt); econ.food_debt-=pay; amount-=pay
+                    factor=1 if key=="grain" else 2
+                    credit=amount*factor
+                    used_credit=min(credit,int(econ.food_debt))
+                    used_units=math.ceil(used_credit/factor)
+                    econ.food_debt-=used_credit
+                    amount=max(0,amount-used_units)
+                    if econ.food_debt==0:
+                        econ.food_debt_due_at=None
                 if amount and key in balances: balances[key].amount+=amount
             else:
                 unit=await session.scalar(select(ArmyUnit).where(ArmyUnit.castle_id==castle.id,ArmyUnit.unit_key==key).with_for_update())
@@ -169,8 +187,10 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
             if row: row.amount-=used
             remaining=max(0,remaining-used*divisor)
         if remaining:
+            had_active_debt=bool(econ.food_debt and econ.food_debt_due_at and econ.food_debt_due_at>now)
             econ.food_debt+=int(remaining)
-            econ.food_debt_due_at=now
+            if not had_active_debt:
+                econ.food_debt_due_at=now+timedelta(hours=24)
         econ.last_week_key=week; processed+=1
     return {"paused":False,"processed":processed,"week":week}
 
