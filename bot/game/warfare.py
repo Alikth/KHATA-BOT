@@ -120,8 +120,11 @@ async def issue_war_command(session: AsyncSession, expedition_id: int, lord: Lor
     defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
     if defender: row.defender_assets=await _get_assets(session,row.target_castle_id,("army","equipment","fleet"))
     if command=="deploy":
-        await set_arrival_choice(session,expedition_id,lord,"garrison")
-    else: row.status="resolving"
+        # The website treats deployment as a two-step flow: first issue the
+        # deploy command, then choose garrison/alliance/transfer at arrival.
+        row.status="arrived"
+    else:
+        row.status="resolving"
     return row
 
 async def submit_scenario(session: AsyncSession, expedition_id: int, lord: Lord, text: str):
