@@ -1,7 +1,7 @@
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from bot.database.models import Lord, ResourceBalance, TradeOffer, AdminAuditLog, GameState, Castle, GroupRegistration
-from bot.game.engine import initialize_castle, STARTING_RESOURCES
+from bot.database.models import Lord, ResourceBalance, TradeOffer, AdminAuditLog, GameState, Castle, GroupRegistration, CastleEconomyState, WarExpedition
+from bot.game.engine import initialize_castle, STARTING_RESOURCES, CATALOG
 
 # Resource names follow the source website's game-rules.js vocabulary.
 RESOURCE_NAMES = {
@@ -17,16 +17,26 @@ async def get_lord(session: AsyncSession, telegram_id: int):
 async def get_group(session: AsyncSession, chat_id: int):
     return await session.scalar(select(GroupRegistration).where(GroupRegistration.telegram_chat_id == chat_id, GroupRegistration.enabled.is_(True)))
 
-async def create_castle_group(session: AsyncSession, chat_id: int, title: str, castle_name: str, region: str, house: str, owner_id: int):
+async def create_castle_group(session: AsyncSession, chat_id: int, title: str, castle_name: str, region: str, house: str, owner_id: int, chat_type: str = "supergroup"):
+    if chat_type not in ("group", "supergroup"):
+        raise ValueError("ثبت قلعه فقط از داخل گروه یا سوپرگروه تلگرام ممکن است.")
     if await get_group(session, chat_id):
         raise ValueError("این گروه قبلاً به یک قلعه متصل شده است.")
+    site_castle = next(
+        ((zone["region"], item["house"]) for zone in CATALOG["houses"] for item in zone["castles"] if item["castle"] == castle_name),
+        None,
+    )
+    if not site_castle:
+        raise ValueError("نام قلعه در فهرست رسمی بازی وجود ندارد.")
+    if (region, house) != site_castle:
+        raise ValueError(f"منطقه و خاندان این قلعه باید دقیقاً «{site_castle[0]}» و «{site_castle[1]}» باشد.")
     castle = await session.scalar(select(Castle).where(Castle.name == castle_name))
     if castle:
         raise ValueError("این قلعه قبلاً به گروه دیگری اختصاص داده شده است.")
     castle = Castle(name=castle_name, region=region, house=house)
     session.add(castle)
     await session.flush()
-    group = GroupRegistration(telegram_chat_id=chat_id, title=title[:255], chat_type="supergroup", castle_id=castle.id, registered_by_telegram_id=owner_id)
+    group = GroupRegistration(telegram_chat_id=chat_id, title=title[:255], chat_type=chat_type, castle_id=castle.id, registered_by_telegram_id=owner_id)
     session.add(group)
     await session.flush()
     return castle, group
@@ -51,14 +61,63 @@ async def get_balances(session: AsyncSession, lord_id: int):
     rows = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id == lord_id).order_by(ResourceBalance.resource_code))).all()
     return {row.resource_code: row.amount for row in rows}
 
+async def _assert_trade_allowed(session: AsyncSession, *lords: Lord, check_pending: bool = True):
+    lord_ids = sorted({lord.id for lord in lords})
+    # Serialize concurrent offer creation for the same accounts.
+    await session.scalars(select(Lord).where(Lord.id.in_(lord_ids)).order_by(Lord.id).with_for_update())
+    castle_ids = sorted({lord.castle_id for lord in lords})
+    locked = await session.scalar(select(WarExpedition.id).where(
+        or_(WarExpedition.target_castle_id.in_(castle_ids),
+            WarExpedition.origin_castle_id.in_(castle_ids)),
+        WarExpedition.status == "resolving",
+        WarExpedition.command.in_(("attack", "siege"))
+    ).limit(1))
+    if locked:
+        raise ValueError("تجارت برای قلعه‌ای که درگیر حمله یا محاصره است موقتاً قفل شده است.")
+    if check_pending:
+        pending = (await session.scalars(select(TradeOffer.id).where(
+            TradeOffer.status == "pending",
+            or_(TradeOffer.sender_lord_id.in_([x.id for x in lords]),
+                TradeOffer.recipient_lord_id.in_([x.id for x in lords]))
+        ).limit(20))).all()
+        if len(pending) >= 20:
+            raise ValueError("سقف ۲۰ معامله در انتظار برای یکی از طرفین پر شده است.")
+
+async def _credit_received(session: AsyncSession, lord_id: int, code: str, amount: int):
+    amount = int(amount)
+    if amount <= 0:
+        return
+    if code in ("grain", "fish", "meat"):
+        econ = await session.get(CastleEconomyState,
+            await session.scalar(select(Lord.castle_id).where(Lord.id == lord_id)),
+            with_for_update=True)
+        if econ and econ.food_debt > 0:
+            factor = 1 if code == "grain" else 2
+            credit = amount * factor
+            used_credit = min(credit, int(econ.food_debt))
+            used_units = (used_credit + factor - 1) // factor
+            econ.food_debt -= used_credit
+            amount = max(0, amount - used_units)
+            if econ.food_debt == 0:
+                econ.food_debt_due_at = None
+    if amount:
+        balance = await session.scalar(select(ResourceBalance).where(
+            ResourceBalance.lord_id == lord_id, ResourceBalance.resource_code == code
+        ).with_for_update())
+        if balance:
+            balance.amount += amount
+        else:
+            session.add(ResourceBalance(lord_id=lord_id, resource_code=code, amount=amount))
+
 async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, offered_resource: str, offered_amount: int, requested_resource: str, requested_amount: int):
-    if offered_resource not in RESOURCE_NAMES or requested_resource not in RESOURCE_NAMES:
-        raise ValueError("منبع نامعتبر است.")
+    if offered_resource not in RESOURCE_NAMES or requested_resource not in RESOURCE_NAMES or offered_resource == "peasants" or requested_resource == "peasants":
+        raise ValueError("این منبع در تجارت قابل معامله نیست.")
     if offered_amount <= 0 or requested_amount <= 0:
         raise ValueError("مقدار باید مثبت باشد.")
     recipient = await get_lord(session, recipient_id)
     if not recipient or recipient.id == sender.id:
         raise ValueError("بازیکن مقصد معتبر نیست.")
+    await _assert_trade_allowed(session, sender, recipient)
     balances = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id == sender.id).with_for_update())).all()
     if {r.resource_code:r.amount for r in balances}.get(offered_resource, 0) < offered_amount:
         raise ValueError("منابع کافی برای پیشنهاد معامله نداری.")
@@ -70,6 +129,7 @@ async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, o
 async def create_trade_bundle(session: AsyncSession, sender: Lord, recipient_id: int, offered: dict, requested: dict):
     recipient=await get_lord(session,recipient_id)
     if not recipient or recipient.id==sender.id: raise ValueError("بازیکن مقصد معتبر نیست.")
+    await _assert_trade_allowed(session, sender, recipient)
     if not offered or not requested: raise ValueError("هر دو طرف معامله باید دارایی داشته باشند.")
     if len(offered)>20 or len(requested)>20: raise ValueError("حداکثر ۲۰ نوع دارایی در هر سمت مجاز است.")
     rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id==sender.id).with_for_update())).all()
@@ -96,6 +156,10 @@ async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram
     if not accept:
         offer.status = "rejected"
         return offer
+    sender = await session.get(Lord, offer.sender_lord_id)
+    if not sender:
+        raise ValueError("فرستنده معامله دیگر فعال نیست.")
+    await _assert_trade_allowed(session, sender, recipient, check_pending=False)
     if offer.offered_assets is not None or offer.requested_assets is not None:
         offered = offer.offered_assets or {}
         requested = offer.requested_assets or {}
@@ -112,10 +176,10 @@ async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram
             if amount<=0 or not row or row.amount<amount: raise ValueError(f"دارایی درخواستی گیرنده کافی نیست: {code}")
         for code,amount in offered.items():
             lookup[(offer.sender_lord_id,code)].amount-=int(amount)
-            lookup[(offer.recipient_lord_id,code)].amount+=int(amount)
+            await _credit_received(session, offer.recipient_lord_id, code, int(amount))
         for code,amount in requested.items():
             lookup[(offer.recipient_lord_id,code)].amount-=int(amount)
-            lookup[(offer.sender_lord_id,code)].amount+=int(amount)
+            await _credit_received(session, offer.sender_lord_id, code, int(amount))
         offer.status="completed"
         return offer
     ids = sorted([offer.sender_lord_id, offer.recipient_lord_id])
@@ -125,8 +189,10 @@ async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram
     sr, ro = lookup.get((offer.sender_lord_id,offer.requested_resource)), lookup.get((offer.recipient_lord_id,offer.offered_resource))
     if not all((so,rr,sr,ro)) or so.amount < offer.offered_amount or rr.amount < offer.requested_amount:
         raise ValueError("منابع کافی برای انجام معامله وجود ندارد.")
-    so.amount -= offer.offered_amount; ro.amount += offer.offered_amount
-    rr.amount -= offer.requested_amount; sr.amount += offer.requested_amount
+    so.amount -= offer.offered_amount
+    await _credit_received(session, offer.recipient_lord_id, offer.offered_resource, offer.offered_amount)
+    rr.amount -= offer.requested_amount
+    await _credit_received(session, offer.sender_lord_id, offer.requested_resource, offer.requested_amount)
     offer.status = "completed"
     return offer
 

@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import (Castle, Lord, ResourceBalance, ProductionLevel, CampLevel,
-    SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState, GameState)
+    SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState, GameState, WarExpedition)
 
 CATALOG = json.loads((Path(__file__).with_name("site_catalog.json")).read_text(encoding="utf-8"))
 RESOURCE_KEYS = CATALOG["RESOURCE_KEYS"]
@@ -57,7 +57,18 @@ async def _spend(session, lord_id: int, cost: dict):
         if key not in rows or rows[key].amount < int(amount): raise ValueError(f"منابع کافی نیست: {RESOURCE_LABELS.get(key,key)}")
     for key, amount in cost.items(): rows[key].amount -= int(amount)
 
+async def _ensure_not_sieged(session, castle_id: int):
+    siege = await session.scalar(select(WarExpedition.id).where(
+        WarExpedition.target_castle_id == castle_id,
+        WarExpedition.command == "siege",
+        WarExpedition.status == "resolving",
+        WarExpedition.outcome.is_(None)
+    ).limit(1))
+    if siege:
+        raise ValueError("در زمان محاصره امکان ارتقای ساختمان، کارگاه، ادوات یا بندر وجود ندارد.")
+
 async def upgrade(session: AsyncSession, lord: Lord, category: str, key: str):
+    await _ensure_not_sieged(session, lord.castle_id)
     if category=="production":
         defs=GENERAL_PRODUCTIONS.copy(); special=SPECIAL_PRODUCTIONS.get((await session.get(Castle,lord.castle_id)).region)
         if special: defs[special["key"]]=special
@@ -107,17 +118,86 @@ async def advance_world_clock(session: AsyncSession, reset_real_tick: bool=False
     state.value=value
     return world
 
+def calculate_food_debt_casualties(army_counts: dict[str, int], debt_grain: int) -> dict[str, int]:
+    """Allocate expired food-debt casualties proportionally, matching the site algorithm."""
+    clean={key:max(0,int(value)) for key,value in army_counts.items() if int(value)>0}
+    total=sum(clean.values())
+    target=min(total,max(0,math.ceil(int(debt_grain))))
+    if not target or not total:
+        return {key:0 for key in clean}
+    shares={key:count*target/total for key,count in clean.items()}
+    deaths={key:math.floor(raw) for key,raw in shares.items()}
+    left=target-sum(deaths.values())
+    order=sorted(clean,key=lambda key:shares[key]-deaths[key],reverse=True)
+    for key in order:
+        if left<=0: break
+        if deaths[key]<clean[key]:
+            deaths[key]+=1
+            left-=1
+    return deaths
+
+
+async def settle_expired_food_debts(session: AsyncSession, castle_id: int | None=None):
+    """Apply overdue food debt to proportional army casualties; sieged castles are exempt."""
+    now=datetime.now(timezone.utc)
+    query=select(CastleEconomyState).where(
+        CastleEconomyState.food_debt>0,
+        CastleEconomyState.food_debt_due_at.is_not(None),
+        CastleEconomyState.food_debt_due_at<=now
+    )
+    if castle_id is not None:
+        query=query.where(CastleEconomyState.castle_id==castle_id)
+    rows=(await session.scalars(query.with_for_update())).all()
+    processed=0
+    for econ in rows:
+        siege=await session.scalar(select(WarExpedition.id).where(
+            WarExpedition.target_castle_id==econ.castle_id,
+            WarExpedition.command=="siege",
+            WarExpedition.status=="resolving",
+            WarExpedition.outcome.is_(None)
+        ).limit(1))
+        if siege: continue
+        army=(await session.scalars(select(ArmyUnit).where(
+            ArmyUnit.castle_id==econ.castle_id,ArmyUnit.count>0
+        ).order_by(ArmyUnit.id).with_for_update())).all()
+        deaths=calculate_food_debt_casualties({x.unit_key:x.count for x in army},econ.food_debt)
+        for unit in army:
+            loss=deaths.get(unit.unit_key,0)
+            if loss: unit.count=max(0,unit.count-loss)
+        econ.food_debt=0
+        econ.food_debt_due_at=None
+        processed+=1
+    return {"processed":processed}
+
+
 async def weekly_settlement(session: AsyncSession, force: bool=False):
     """Settle one world week once per castle using the website's production/upkeep formula."""
     state=await session.get(GameState,"world")
-    if state and state.value.get("paused",True): return {"paused":True,"processed":0}
+    if state is None or bool((state.value or {}).get("paused",True)):
+        return {"paused":True,"processed":0}
     now=await advance_world_clock(session)
+    # advance_world_clock may initialize a missing state as paused; never settle
+    # the first week until an administrator explicitly resumes the world.
+    state=await session.get(GameState,"world")
+    if state is None or bool((state.value or {}).get("paused",True)):
+        return {"paused":True,"processed":0}
     week=f"{now.isocalendar().year}-W{now.isocalendar().week:02d}"
     castles=(await session.scalars(select(Castle).where(Castle.active.is_(True)))).all(); processed=0
     for castle in castles:
         econ=await session.get(CastleEconomyState,castle.id)
         if not econ: continue
         if not force and econ.last_week_key==week: continue
+        # Skip production/upkeep during an active siege, as on the website.
+        under_siege=await session.scalar(select(WarExpedition.id).where(
+            WarExpedition.target_castle_id==castle.id,
+            WarExpedition.command=="siege",
+            WarExpedition.status=="resolving",
+            WarExpedition.outcome.is_(None)
+        ).limit(1))
+        if under_siege:
+            econ.last_week_key=week
+            processed+=1
+            continue
         lords=(await session.scalars(select(Lord).where(Lord.castle_id==castle.id,Lord.status=="active"))).all()
         if not lords: econ.last_week_key=week; continue
         lord=lords[0]; changes={}
@@ -141,7 +221,14 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
             amount=int(gain)
             if key in RESOURCE_KEYS:
                 if key in ("grain","fish","meat") and econ.food_debt:
-                    pay=min(amount,econ.food_debt); econ.food_debt-=pay; amount-=pay
+                    factor=1 if key=="grain" else 2
+                    credit=amount*factor
+                    used_credit=min(credit,int(econ.food_debt))
+                    used_units=math.ceil(used_credit/factor)
+                    econ.food_debt-=used_credit
+                    amount=max(0,amount-used_units)
+                    if econ.food_debt==0:
+                        econ.food_debt_due_at=None
                 if amount and key in balances: balances[key].amount+=amount
             else:
                 unit=await session.scalar(select(ArmyUnit).where(ArmyUnit.castle_id==castle.id,ArmyUnit.unit_key==key).with_for_update())
@@ -163,12 +250,15 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
             if row: row.amount-=used
             remaining=max(0,remaining-used*divisor)
         if remaining:
+            had_active_debt=bool(econ.food_debt and econ.food_debt_due_at and econ.food_debt_due_at>now)
             econ.food_debt+=int(remaining)
-            econ.food_debt_due_at=now
+            if not had_active_debt:
+                econ.food_debt_due_at=now+timedelta(hours=24)
         econ.last_week_key=week; processed+=1
     return {"paused":False,"processed":processed,"week":week}
 
 async def upgrade_workshop(session: AsyncSession, lord: Lord):
+    await _ensure_not_sieged(session, lord.castle_id)
     econ=await session.get(CastleEconomyState,lord.castle_id,with_for_update=True)
     if not econ: raise ValueError("اطلاعات اقتصادی قلعه پیدا نشد.")
     if econ.workshop_level>=5: raise ValueError("کارگاه به حداکثر سطح ۵ رسیده است.")
@@ -177,6 +267,7 @@ async def upgrade_workshop(session: AsyncSession, lord: Lord):
     return econ.workshop_level
 
 async def build_equipment(session: AsyncSession, lord: Lord, key: str):
+    await _ensure_not_sieged(session, lord.castle_id)
     from datetime import date
     from bot.database.models import EquipmentBuildLimit
     definition=EQUIPMENT.get(key)
@@ -195,6 +286,7 @@ async def build_equipment(session: AsyncSession, lord: Lord, key: str):
     return definition,item.count
 
 async def upgrade_port(session: AsyncSession, lord: Lord):
+    await _ensure_not_sieged(session, lord.castle_id)
     econ=await session.get(CastleEconomyState,lord.castle_id,with_for_update=True)
     if not econ or not econ.port_enabled: raise ValueError("این قلعه بندر ندارد.")
     if econ.port_level>=15: raise ValueError("اسکله به حداکثر سطح ۱۵ رسیده است.")

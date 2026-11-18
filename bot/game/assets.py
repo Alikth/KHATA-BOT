@@ -1,4 +1,4 @@
-"""
-Validated asset operations. All balance changes must occur in database transactions
-and create an audit record; direct untracked edits are forbidden.
-"""
+"""Shared asset inventory helpers used by expedition and garrison workflows."""
+from bot.game.warfare import ASSET_MODELS, _asset_row, _get_assets
+
+__all__ = ["ASSET_MODELS", "_asset_row", "_get_assets"]

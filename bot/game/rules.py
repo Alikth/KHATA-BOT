@@ -1,5 +1,12 @@
-"""
-Central location for validated game rules.
-Do not hardcode gameplay values inside Telegram handlers.
-The actual rules are added after mapping and testing the website's behavior.
-"""
+"""Canonical static game rules exported from the KHATA-GAMES site."""
+from bot.game.engine import (
+    CATALOG, RESOURCE_KEYS, RESOURCE_LABELS, GENERAL_PRODUCTIONS,
+    SPECIAL_PRODUCTIONS, REGION_MULTIPLIERS, GENERAL_CAMPS,
+    SPECIAL_CAMPS, EQUIPMENT, STARTING_RESOURCES, STARTING_ARMY,
+)
+
+__all__ = [
+    "CATALOG", "RESOURCE_KEYS", "RESOURCE_LABELS", "GENERAL_PRODUCTIONS",
+    "SPECIAL_PRODUCTIONS", "REGION_MULTIPLIERS", "GENERAL_CAMPS",
+    "SPECIAL_CAMPS", "EQUIPMENT", "STARTING_RESOURCES", "STARTING_ARMY",
+]

@@ -1,20 +1,25 @@
-# Project status
+# وضعیت پروژه KHATA-GAMES Telegram Bot
 
-## Phase 1 scaffold
-- [x] Separate project directory and repository-ready structure
-- [x] PostgreSQL schema draft and initial SQL migration
-- [x] Initial SQLAlchemy models for core persistence entities
-- [x] Environment template and Windows setup/start scripts
-- [x] Initial test plan and schema contract tests
+## اصلاحات ثبت‌شده در شاخه fix/core-stability
+- [x] مهاجرت SQL شماره ۳ برای ۹ جدول جاافتاده ORM؛ پوشش ۲۵ جدول مدل‌ها در مهاجرت‌ها.
+- [x] حذف create_all از شروع ربات و الزام schema version 3.
+- [x] رفع import تجهیزات و تکمیل exportهای ماژول‌های production/combat/expeditions/rules/assets.
+- [x] توقف امن تسویه در زمان توقف جهان و جلوگیری از تولید/ارتقا هنگام محاصره.
+- [x] تطبیق بدهی غذا، تسویه بدهی سررسیدگذشته با تلفات متناسب ارتش و تسویه بدهی هنگام دریافت غذا در تجارت.
+- [x] کنترل مالکیت لشکرکشی، بندر مبدأ/مقصد، روند دو مرحله‌ای deploy و بازگشت خودکار لشکر بی‌تصمیم.
+- [x] اصلاح موجودی مقصد در انتقال نیرو و استقرار در قلعه خود لرد.
+- [x] محدودیت تجارت رعیت، قفل تجارت هنگام جنگ و سقف ۲۰ پیشنهاد در انتظار.
+- [x] محدودیت تلاش ورود مدیر، اعتبارسنجی قلعه با کاتالوگ رسمی و حذف فایل .env و bytecode از شاخه.
+- [x] ابزار مهاجرت، بکاپ با checksum، بازیابی محافظت‌شده به دیتابیس خالی و مستندات راه‌اندازی.
+- [x] CI PostgreSQL 16: اجرای هر سه مهاجرت، تطبیق همه جدول‌ها و ستون‌ها با ORM، کامپایل سورس‌ها و اجرای تست‌ها.
+- [x] آخرین اجرای تأییدشده CI: ۱۹ تست موفق.
 
-## Not yet complete
-- [ ] Create a new private GitHub repository and push this project
-- [ ] Run tests in a configured Python environment
-- [ ] Run migrations against a disposable PostgreSQL instance
-- [ ] Complete domain model from all transferable website rules
-- [ ] Implement robust pause/resume world clock
-- [ ] Implement backup, restore verification and off-device backup
-- [ ] Implement bot handlers and admin workflows
-- [ ] Implement complete game logic and regression suite
+## هنوز تأیید نشده / مانع انتشار عمومی
+- [ ] بازیابی واقعی بکاپ روی دیتابیس مجزا و بررسی داده‌های بازیابی‌شده.
+- [ ] تست رفتاری چندقلعه‌ای برای اقتصاد، تجارت، جنگ، محاصره و انتقال دارایی.
+- [ ] تطبیق کامل همه قواعد و قابلیت‌های سایت؛ اعلان‌های خصوصی و برخی کنترل‌های مستقل جنگ/تجارت هنوز ناقص‌اند.
+- [ ] تست واقعی Telegram Bot API و استقرار ۲۴/۷ روی VPS.
+- [ ] نشست مدیریت پایدار؛ نشست فعلی با restart پاک می‌شود.
 
-This scaffold is not production-ready. It must not be used with real player assets yet.
+## وضعیت انتشار
+این شاخه یک بسته اصلاحات پایداری با CI سبز است، نه گواهی برابری کامل با سایت یا نسخه آماده برای دارایی بازیکنان واقعی. تا پایان بازیابی آزمایشی و تست رفتاری، فقط در محیط آزمایشی استفاده شود.

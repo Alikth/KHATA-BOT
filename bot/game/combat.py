@@ -1,4 +1,4 @@
-"""
-Pure combat calculations belong here. Keep database writes outside this module.
-Implement only after documenting the existing game's formulas and edge cases.
-"""
+"""Battle scenario submission and admin adjudication services."""
+from bot.game.warfare import submit_scenario, review_battle
+
+__all__ = ["submit_scenario", "review_battle"]

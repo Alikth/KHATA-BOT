@@ -1,3 +1,4 @@
+import re
 from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery
@@ -5,8 +6,9 @@ from sqlalchemy import select
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
 from time import monotonic
+from datetime import datetime, timedelta, timezone
 from bot.config import get_settings
-from bot.database.models import Lord, TradeOffer, Castle
+from bot.database.models import Lord, TradeOffer, Castle, AdminLoginAttempt
 from bot.services import (get_lord, get_group, create_lord, create_castle_group, get_balances,
                           create_trade, resolve_trade, audit, is_world_paused, set_world_paused,
                           RESOURCE_NAMES)
@@ -69,6 +71,8 @@ async def register_castle(message: Message, session_factory):
     cfg = get_settings()
     if not message.from_user or message.from_user.id != cfg.bot_owner_id:
         await message.answer("فقط مالک اصلی می‌تواند گروه قلعه را ثبت کند."); return
+    if not message.chat or message.chat.type not in ("group", "supergroup"):
+        await message.answer("ثبت قلعه باید داخل گروه تلگرام انجام شود."); return
     # /registercastle Castle Name | Region | House
     raw = (message.text or "").partition(" ")[2]
     parts = [x.strip() for x in raw.split("|")]
@@ -76,7 +80,7 @@ async def register_castle(message: Message, session_factory):
         await message.answer("فرمت: /registercastle نام قلعه | منطقه | خاندان"); return
     async with session_factory() as session, session.begin():
         try:
-            castle, _ = await create_castle_group(session, message.chat.id, message.chat.title or "Castle Group", parts[0], parts[1], parts[2], cfg.bot_owner_id)
+            castle, _ = await create_castle_group(session, message.chat.id, message.chat.title or "Castle Group", parts[0], parts[1], parts[2], cfg.bot_owner_id, message.chat.type)
             await audit(session, cfg.bot_owner_id, "castle_group_registered", str(castle.id), f"chat_id={message.chat.id}")
         except ValueError as exc:
             await message.answer(str(exc)); return
@@ -163,21 +167,59 @@ async def admin_panel(message: Message, session_factory):
     cfg = get_settings()
     if not message.from_user or message.from_user.id != cfg.bot_owner_id or message.chat.id != cfg.admin_chat_id:
         await message.answer("دسترسی مجاز نیست."); return
+
     code = (message.text or "").partition(" ")[2].strip()
-    try:
-        if not code or not cfg.admin_password_hash:
-            raise VerifyMismatchError
-        PasswordHasher().verify(cfg.admin_password_hash, code)
-    except (VerifyMismatchError, VerificationError, Exception):
-        try: await message.delete()
-        except Exception: pass
-        await message.answer("کد دسترسی نامعتبر است یا تنظیم نشده."); return
     try: await message.delete()
     except Exception: pass
+
+    now = datetime.now(timezone.utc)
+    async with session_factory() as session, session.begin():
+        attempt = await session.scalar(
+            select(AdminLoginAttempt).where(
+                AdminLoginAttempt.telegram_user_id == message.from_user.id
+            ).with_for_update()
+        )
+        if attempt and attempt.locked_until and attempt.locked_until > now:
+            remaining = max(1, int((attempt.locked_until - now).total_seconds() // 60) + 1)
+            await message.answer(f"ورود موقتاً قفل شده است؛ {remaining} دقیقه دیگر تلاش کن.")
+            return
+
+    valid = False
+    if code and cfg.admin_password_hash:
+        try:
+            PasswordHasher().verify(cfg.admin_password_hash, code)
+            valid = True
+        except Exception:
+            valid = False
+
+    async with session_factory() as session, session.begin():
+        attempt = await session.scalar(
+            select(AdminLoginAttempt).where(
+                AdminLoginAttempt.telegram_user_id == message.from_user.id
+            ).with_for_update()
+        )
+        if attempt is None:
+            attempt = AdminLoginAttempt(telegram_user_id=message.from_user.id, failures=0)
+            session.add(attempt)
+            await session.flush()
+        if valid:
+            attempt.failures = 0
+            attempt.locked_until = None
+        else:
+            attempt.failures = (attempt.failures or 0) + 1
+            if attempt.failures >= 5:
+                attempt.failures = 0
+                attempt.locked_until = now + timedelta(minutes=15)
+
+    if not valid:
+        await message.answer("کد دسترسی نامعتبر است یا تنظیم نشده؛ پس از ۵ تلاش ناموفق، ورود ۱۵ دقیقه قفل می‌شود.")
+        return
+
     _admin_sessions[message.from_user.id] = monotonic() + (cfg.admin_session_minutes * 60)
     async with session_factory() as session:
         paused = await is_world_paused(session)
     await message.answer("🔐 پنل مدیریت KHATA-GAMES\n" + f"ساعت جهان: {'متوقف' if paused else 'فعال'}\n\n/pause — توقف جهان\n/resume — ادامه جهان\n/status — وضعیت جهان")
+
 
 async def admin_action(message: Message, session_factory, paused: bool | None):
     cfg = get_settings()
@@ -207,7 +249,7 @@ async def world_status(message: Message, session_factory):
     if not await admin_action(message, session_factory, None): await message.answer("دسترسی مجاز نیست.")
 
 # Website-aligned economy commands. Definitions are loaded from the uploaded site's catalog.
-from bot.game.engine import (CATALOG, upgrade as engine_upgrade, recruit as engine_recruit,
+from bot.game.engine import (CATALOG, EQUIPMENT, upgrade as engine_upgrade, recruit as engine_recruit,
     RESOURCE_LABELS, GENERAL_PRODUCTIONS, SPECIAL_PRODUCTIONS, GENERAL_CAMPS, SPECIAL_CAMPS)
 from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState
 
@@ -332,11 +374,12 @@ from bot.game.warfare import (launch_expedition, arrive_expeditions, set_arrival
 @router.message(Command("march"))
 async def march_cmd(message: Message, session_factory, bot):
     """/march target-castle land|sea minutes army:swordsman=100,archer=20;equipment:ladder=2;fleet:transport=1"""
-    raw=(message.text or "").partition(" ")[2]
-    bits=raw.split(maxsplit=3)
-    if len(bits)<4:
-        await message.answer("فرمت: /march نام_قلعه_مقصد land|sea مدت_دقیقه army:swordsman=100,archer=20;equipment:ladder=2;fleet:transport=1");return
-    target,kind,minutes_s,assets_s=bits
+    raw=(message.text or "").partition(" ")[2].strip()
+    match=re.match(r"^(.+?)\s+(land|sea)\s+(\d+)\s+(.+)$",raw,re.IGNORECASE)
+    if not match:
+        await message.answer("فرمت: /march نام کامل قلعه land|sea مدت_دقیقه army:swordsman=100;equipment:ladder=2;fleet:transport=1");return
+    target,kind,minutes_s,assets_s=match.groups()
+    kind=kind.lower()
     assets={"army":{},"equipment":{},"fleet":{}}
     try:
         for section in assets_s.split(";"):
@@ -369,12 +412,12 @@ async def arrivals_cmd(message: Message, session_factory):
         await arrive_expeditions(session)
         rows=(await session.scalars(select(WarExpedition).where(WarExpedition.attacker_lord_id==lord.id,WarExpedition.status=="arrived").order_by(WarExpedition.id.desc()))).all()
     if not rows: await message.answer("لشکر رسیده‌ای نداری.");return
-    await message.answer("لشکرهای رسیده:\n"+"\n".join(f"#{x.id} → قلعه مقصد {x.target_castle_id} | انتخاب: /arrival {x.id} garrison|alliance|transfer|deploy" for x in rows))
+    await message.answer("لشکرهای رسیده:\n"+"\n".join(f"#{x.id} → قلعه مقصد {x.target_castle_id} | ابتدا /warcommand {x.id} deploy و سپس /arrival {x.id} garrison|alliance|transfer" for x in rows))
 
 @router.message(Command("arrival"))
 async def arrival_choice_cmd(message: Message, session_factory):
     p=(message.text or "").split()
-    if len(p)!=3: await message.answer("فرمت: /arrival شناسه garrison|alliance|transfer|deploy");return
+    if len(p)!=3: await message.answer("فرمت: /arrival شناسه garrison|alliance|transfer (پس از دستور /warcommand شناسه deploy)");return
     try:
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
@@ -590,11 +633,13 @@ async def garrisons_cmd(message: Message, session_factory):
 
 @router.message(Command("marchgarrison"))
 async def march_garrison_cmd(message: Message, session_factory, bot):
-    p=(message.text or "").partition(" ")[2].split(maxsplit=4)
-    if len(p)<5: await message.answer("فرمت: /marchgarrison sourceCastleId target land|sea minutes army:swordsman=10;equipment:ladder=1;fleet:transport=1");return
+    raw=(message.text or "").partition(" ")[2].strip()
+    match=re.match(r"^(\d+)\s+(.+?)\s+(land|sea)\s+(\d+)\s+(.+)$",raw,re.IGNORECASE)
+    if not match: await message.answer("فرمت: /marchgarrison sourceCastleId نام کامل مقصد land|sea minutes army:swordsman=10;equipment:ladder=1;fleet:transport=1");return
     try:
-        source_id=int(p[0]);target=p[1];kind=p[2];minutes=int(p[3]);assets={"army":{},"equipment":{},"fleet":{}}
-        for section in p[4].split(";"):
+        source_s,target,kind,minutes_s,asset_text=match.groups()
+        source_id=int(source_s);kind=kind.lower();minutes=int(minutes_s);assets={"army":{},"equipment":{},"fleet":{}}
+        for section in asset_text.split(";"):
             if not section.strip():continue
             group,sep,items=section.partition(":")
             if not sep or group not in assets:raise ValueError("بخش دارایی نامعتبر است.")
