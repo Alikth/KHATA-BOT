@@ -36,15 +36,28 @@ async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_nam
     if expedition_type not in ("land","sea"): raise ValueError("نوع لشکرکشی باید land یا sea باشد.")
     if not 1 <= duration_minutes <= 10080: raise ValueError("مدت سفر باید بین ۱ دقیقه تا ۷ روز باشد.")
     origin_id=source_castle_id or lord.castle_id
+    if not use_garrison and origin_id != lord.castle_id:
+        raise ValueError("فقط می‌توانی از موجودی قلعه خودت لشکرکشی کنی.")
     origin=await session.get(Castle,origin_id)
     if not origin: raise ValueError("قلعه مبدأ پیدا نشد.")
+    origin_locked=await session.scalar(select(WarExpedition.id).where(
+        WarExpedition.target_castle_id==origin_id,
+        WarExpedition.status=="resolving",
+        WarExpedition.command.in_(("attack","siege"))
+    ).limit(1))
+    if origin_locked: raise ValueError("قلعه مبدأ درگیر حمله یا محاصره است و فعلاً امکان اعزام ندارد.")
     target=await session.scalar(select(Castle).where(Castle.name.ilike(target_castle_name),Castle.active.is_(True)))
     if not target or target.id==origin.id: raise ValueError("قلعه مقصد معتبر نیست.")
-    busy=await session.scalar(select(WarExpedition.id).where(WarExpedition.target_castle_id==target.id,WarExpedition.status=="resolving").limit(1))
-    if busy: raise ValueError("این قلعه در حال حاضر درگیر نبرد یا محاصره دیگری است.")
+    busy=await session.scalar(select(WarExpedition.id).where(
+        WarExpedition.target_castle_id==target.id,
+        WarExpedition.status.in_(("travelling","arrived","resolving","returning"))
+    ).limit(1))
+    if busy: raise ValueError("این قلعه در حال حاضر درگیر لشکرکشی یا نبرد دیگری است.")
     if expedition_type=="sea":
-        economy=await session.get(CastleEconomyState,origin.id)
-        if not economy or not economy.port_enabled: raise ValueError("قلعه مبدأ بندر فعال ندارد.")
+        origin_economy=await session.get(CastleEconomyState,origin.id)
+        target_economy=await session.get(CastleEconomyState,target.id)
+        if not origin_economy or not origin_economy.port_enabled: raise ValueError("قلعه مبدأ بندر فعال ندارد.")
+        if not target_economy or not target_economy.port_enabled: raise ValueError("قلعه مقصد بندر فعال ندارد.")
     clean={k:{} for k in ("army","equipment","fleet")}
     for kind in ("army","equipment","fleet"):
         if expedition_type=="land" and kind=="fleet": continue
@@ -215,12 +228,19 @@ async def answer_transfer(session: AsyncSession, request_id: int, lord: Lord, ac
     if not row or row.receiver_lord_id!=lord.id or row.status!="pending": raise ValueError("درخواست انتقال پیدا نشد.")
     row.status="accepted" if accept else "rejected";row.responded_at=datetime.now(timezone.utc)
     expedition=await session.get(WarExpedition,row.expedition_id)
+    if not expedition or expedition.status!="resolving":
+        raise ValueError("لشکرکشی مربوط به این درخواست دیگر فعال نیست.")
     if accept:
-        for kind,items in row.assets.items():
-            for key,n in items.items():
-                a=await _asset_row(session,expedition.target_castle_id,kind,key,row.sender_lord_id)
-                if a:a.count+=int(n)
-                else:session.add(GarrisonAsset(castle_id=expedition.target_castle_id,owner_lord_id=row.sender_lord_id,asset_kind=kind,asset_key=key,count=int(n)))
+        # Accepted transfers become ordinary assets of the receiving lord's castle.
+        for kind,items in (row.assets or {}).items():
+            if kind not in ASSET_MODELS: raise ValueError("نوع دارایی انتقالی نامعتبر است.")
+            model,field=ASSET_MODELS[kind]
+            for key,nraw in items.items():
+                n=int(nraw)
+                if n<=0: raise ValueError("مقدار دارایی انتقالی نامعتبر است.")
+                asset=await session.scalar(select(model).where(model.castle_id==lord.castle_id,getattr(model,field)==key).with_for_update())
+                if asset: asset.count+=n
+                else: session.add(model(castle_id=lord.castle_id,**{field:key},count=n))
     else:
         for kind,items in row.assets.items():
             for key,n in items.items():
