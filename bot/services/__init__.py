@@ -17,7 +17,9 @@ async def get_lord(session: AsyncSession, telegram_id: int):
 async def get_group(session: AsyncSession, chat_id: int):
     return await session.scalar(select(GroupRegistration).where(GroupRegistration.telegram_chat_id == chat_id, GroupRegistration.enabled.is_(True)))
 
-async def create_castle_group(session: AsyncSession, chat_id: int, title: str, castle_name: str, region: str, house: str, owner_id: int):
+async def create_castle_group(session: AsyncSession, chat_id: int, title: str, castle_name: str, region: str, house: str, owner_id: int, chat_type: str = "supergroup"):
+    if chat_type not in ("group", "supergroup"):
+        raise ValueError("ثبت قلعه فقط از داخل گروه یا سوپرگروه تلگرام ممکن است.")
     if await get_group(session, chat_id):
         raise ValueError("این گروه قبلاً به یک قلعه متصل شده است.")
     castle = await session.scalar(select(Castle).where(Castle.name == castle_name))
@@ -26,7 +28,7 @@ async def create_castle_group(session: AsyncSession, chat_id: int, title: str, c
     castle = Castle(name=castle_name, region=region, house=house)
     session.add(castle)
     await session.flush()
-    group = GroupRegistration(telegram_chat_id=chat_id, title=title[:255], chat_type="supergroup", castle_id=castle.id, registered_by_telegram_id=owner_id)
+    group = GroupRegistration(telegram_chat_id=chat_id, title=title[:255], chat_type=chat_type, castle_id=castle.id, registered_by_telegram_id=owner_id)
     session.add(group)
     await session.flush()
     return castle, group
