@@ -118,6 +118,58 @@ async def advance_world_clock(session: AsyncSession, reset_real_tick: bool=False
     state.value=value
     return world
 
+def calculate_food_debt_casualties(army_counts: dict[str, int], debt_grain: int) -> dict[str, int]:
+    """Allocate expired food-debt casualties proportionally, matching the site algorithm."""
+    clean={key:max(0,int(value)) for key,value in army_counts.items() if int(value)>0}
+    total=sum(clean.values())
+    target=min(total,max(0,math.ceil(int(debt_grain))))
+    if not target or not total:
+        return {key:0 for key in clean}
+    shares={key:count*target/total for key,count in clean.items()}
+    deaths={key:math.floor(raw) for key,raw in shares.items()}
+    left=target-sum(deaths.values())
+    order=sorted(clean,key=lambda key:shares[key]-deaths[key],reverse=True)
+    for key in order:
+        if left<=0: break
+        if deaths[key]<clean[key]:
+            deaths[key]+=1
+            left-=1
+    return deaths
+
+
+async def settle_expired_food_debts(session: AsyncSession, castle_id: int | None=None):
+    """Apply overdue food debt to proportional army casualties; sieged castles are exempt."""
+    now=datetime.now(timezone.utc)
+    query=select(CastleEconomyState).where(
+        CastleEconomyState.food_debt>0,
+        CastleEconomyState.food_debt_due_at.is_not(None),
+        CastleEconomyState.food_debt_due_at<=now
+    )
+    if castle_id is not None:
+        query=query.where(CastleEconomyState.castle_id==castle_id)
+    rows=(await session.scalars(query.with_for_update())).all()
+    processed=0
+    for econ in rows:
+        siege=await session.scalar(select(WarExpedition.id).where(
+            WarExpedition.target_castle_id==econ.castle_id,
+            WarExpedition.command=="siege",
+            WarExpedition.status=="resolving",
+            WarExpedition.outcome.is_(None)
+        ).limit(1))
+        if siege: continue
+        army=(await session.scalars(select(ArmyUnit).where(
+            ArmyUnit.castle_id==econ.castle_id,ArmyUnit.count>0
+        ).order_by(ArmyUnit.id).with_for_update())).all()
+        deaths=calculate_food_debt_casualties({x.unit_key:x.count for x in army},econ.food_debt)
+        for unit in army:
+            loss=deaths.get(unit.unit_key,0)
+            if loss: unit.count=max(0,unit.count-loss)
+        econ.food_debt=0
+        econ.food_debt_due_at=None
+        processed+=1
+    return {"processed":processed}
+
+
 async def weekly_settlement(session: AsyncSession, force: bool=False):
     """Settle one world week once per castle using the website's production/upkeep formula."""
     state=await session.get(GameState,"world")
