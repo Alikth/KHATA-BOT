@@ -13,6 +13,12 @@ async def main():
     logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not cfg.bot_token:
         raise RuntimeError("BOT_TOKEN is missing in .env")
+    if cfg.bot_owner_id <= 0:
+        raise RuntimeError("BOT_OWNER_ID must be a positive Telegram user ID.")
+    if cfg.admin_chat_id == 0:
+        raise RuntimeError("ADMIN_CHAT_ID must point to the private admin group.")
+    if not cfg.admin_password_hash:
+        raise RuntimeError("ADMIN_PASSWORD_HASH is required; generate it with scripts/create_admin_hash.py.")
     engine = make_engine()
     async with engine.connect() as conn:
         try:
