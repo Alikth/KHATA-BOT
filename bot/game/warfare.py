@@ -170,11 +170,13 @@ async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lo
     elif choice=="transfer":
         defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
         if not defender: raise ValueError("قلعه مقصد لرد فعال ندارد و درخواست انتقال لازم نیست.")
+        if defender.id==lord.id: raise ValueError("برای قلعه خودت انتقال ثبت نکن؛ گزینه garrison موجودی عادی را بازمی‌گرداند.")
         session.add(TroopTransferRequest(expedition_id=row.id,sender_lord_id=lord.id,receiver_lord_id=defender.id,assets=row.assets or row.units))
         row.status="resolving"
     elif choice=="alliance":
         defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
         if not defender: raise ValueError("برای اتحاد، قلعه مقصد باید لرد فعال داشته باشد.")
+        if defender.id==lord.id: raise ValueError("با قلعه خودت اتحاد ثبت نمی‌شود؛ گزینه garrison را انتخاب کن.")
         existing=await session.scalar(select(MilitaryAlliance).where(
             or_(
                 (MilitaryAlliance.castle_a_id==row.origin_castle_id) & (MilitaryAlliance.castle_b_id==row.target_castle_id),
