@@ -176,17 +176,40 @@ async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lo
     elif choice=="alliance":
         defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
         if not defender: raise ValueError("برای اتحاد، قلعه مقصد باید لرد فعال داشته باشد.")
-        if defender.id==lord.id: raise ValueError("با قلعه خودت اتحاد ثبت نمی‌شود؛ گزینه garrison را انتخاب کن.")
         existing=await session.scalar(select(MilitaryAlliance).where(
             or_(
                 (MilitaryAlliance.castle_a_id==row.origin_castle_id) & (MilitaryAlliance.castle_b_id==row.target_castle_id),
                 (MilitaryAlliance.castle_a_id==row.target_castle_id) & (MilitaryAlliance.castle_b_id==row.origin_castle_id)
-            ),
-            MilitaryAlliance.status.in_(("pending","accepted"))
+            )
         ).limit(1))
-        if existing: raise ValueError("بین این دو قلعه درخواست یا اتحاد فعالی وجود دارد.")
-        session.add(MilitaryAlliance(castle_a_id=row.origin_castle_id,castle_b_id=row.target_castle_id,owner_a_lord_id=lord.id,owner_b_lord_id=defender.id,status="pending",war_expedition_id=row.id))
-        row.status="resolving"
+        if existing and existing.status in ("pending","accepted"):
+            raise ValueError("بین این دو قلعه درخواست یا اتحاد فعالی وجود دارد.")
+        same_owner=defender.id==lord.id
+        if existing:
+            existing.owner_a_lord_id=lord.id
+            existing.owner_b_lord_id=defender.id
+            existing.status="accepted" if same_owner else "pending"
+            existing.responded_at=datetime.now(timezone.utc) if same_owner else None
+            existing.war_expedition_id=row.id
+        else:
+            session.add(MilitaryAlliance(
+                castle_a_id=row.origin_castle_id,castle_b_id=row.target_castle_id,
+                owner_a_lord_id=lord.id,owner_b_lord_id=defender.id,
+                status="accepted" if same_owner else "pending",
+                responded_at=datetime.now(timezone.utc) if same_owner else None,
+                war_expedition_id=row.id
+            ))
+        if same_owner:
+            for kind,items in (row.assets or row.units).items():
+                for key,nraw in items.items():
+                    n=int(nraw)
+                    if n>0:
+                        asset=await _asset_row(session,row.target_castle_id,kind,key,lord.id)
+                        if asset: asset.count+=n
+                        else: session.add(GarrisonAsset(castle_id=row.target_castle_id,owner_lord_id=lord.id,asset_kind=kind,asset_key=key,count=n))
+            row.status="completed"
+        else:
+            row.status="resolving"
     return row
 
 async def issue_war_command(session: AsyncSession, expedition_id: int, lord: Lord, command: str):
