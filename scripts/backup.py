@@ -61,7 +61,10 @@ def main() -> None:
     if "DATABASE" not in listing.stdout and "TABLE" not in listing.stdout:
         raise RuntimeError("pg_restore could not verify the archive contents.")
 
-    hasher = hashlib.sha256()\n    with archive.open("rb") as stream:\n        for chunk in iter(lambda: stream.read(1024 * 1024), b""):\n            hasher.update(chunk)\n    digest = hasher.hexdigest()
+    hasher = hashlib.sha256()
+    with archive.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(chunk)\n    digest = hasher.hexdigest()
     checksum = archive.with_suffix(archive.suffix + ".sha256")
     checksum.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
     print(f"Verified backup: {archive}")
