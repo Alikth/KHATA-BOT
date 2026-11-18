@@ -207,7 +207,7 @@ async def world_status(message: Message, session_factory):
     if not await admin_action(message, session_factory, None): await message.answer("دسترسی مجاز نیست.")
 
 # Website-aligned economy commands. Definitions are loaded from the uploaded site's catalog.
-from bot.game.engine import (CATALOG, upgrade as engine_upgrade, recruit as engine_recruit,
+from bot.game.engine import (CATALOG, EQUIPMENT, upgrade as engine_upgrade, recruit as engine_recruit,
     RESOURCE_LABELS, GENERAL_PRODUCTIONS, SPECIAL_PRODUCTIONS, GENERAL_CAMPS, SPECIAL_CAMPS)
 from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState
 
