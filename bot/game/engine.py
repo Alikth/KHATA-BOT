@@ -68,6 +68,7 @@ async def _ensure_not_sieged(session, castle_id: int):
         raise ValueError("در زمان محاصره امکان ارتقای ساختمان، کارگاه، ادوات یا بندر وجود ندارد.")
 
 async def upgrade(session: AsyncSession, lord: Lord, category: str, key: str):
+    await _ensure_not_sieged(session, lord.castle_id)
     if category=="production":
         defs=GENERAL_PRODUCTIONS.copy(); special=SPECIAL_PRODUCTIONS.get((await session.get(Castle,lord.castle_id)).region)
         if special: defs[special["key"]]=special
@@ -205,6 +206,7 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
     return {"paused":False,"processed":processed,"week":week}
 
 async def upgrade_workshop(session: AsyncSession, lord: Lord):
+    await _ensure_not_sieged(session, lord.castle_id)
     econ=await session.get(CastleEconomyState,lord.castle_id,with_for_update=True)
     if not econ: raise ValueError("اطلاعات اقتصادی قلعه پیدا نشد.")
     if econ.workshop_level>=5: raise ValueError("کارگاه به حداکثر سطح ۵ رسیده است.")
@@ -213,6 +215,7 @@ async def upgrade_workshop(session: AsyncSession, lord: Lord):
     return econ.workshop_level
 
 async def build_equipment(session: AsyncSession, lord: Lord, key: str):
+    await _ensure_not_sieged(session, lord.castle_id)
     from datetime import date
     from bot.database.models import EquipmentBuildLimit
     definition=EQUIPMENT.get(key)
@@ -231,6 +234,7 @@ async def build_equipment(session: AsyncSession, lord: Lord, key: str):
     return definition,item.count
 
 async def upgrade_port(session: AsyncSession, lord: Lord):
+    await _ensure_not_sieged(session, lord.castle_id)
     econ=await session.get(CastleEconomyState,lord.castle_id,with_for_update=True)
     if not econ or not econ.port_enabled: raise ValueError("این قلعه بندر ندارد.")
     if econ.port_level>=15: raise ValueError("اسکله به حداکثر سطح ۱۵ رسیده است.")
