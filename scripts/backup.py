@@ -64,7 +64,8 @@ def main() -> None:
     hasher = hashlib.sha256()
     with archive.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            hasher.update(chunk)\n    digest = hasher.hexdigest()
+            hasher.update(chunk)
+    digest = hasher.hexdigest()
     checksum = archive.with_suffix(archive.suffix + ".sha256")
     checksum.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
     print(f"Verified backup: {archive}")
