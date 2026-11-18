@@ -97,8 +97,14 @@ async def arrive_expeditions(session: AsyncSession):
 async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lord, choice: str):
     row=await session.scalar(select(WarExpedition).where(WarExpedition.id==expedition_id).with_for_update())
     if not row or row.attacker_lord_id!=lord.id or row.status!="arrived": raise ValueError("لشکر پیدا نشد یا هنوز به مقصد نرسیده است.")
+    if row.command != "deploy":
+        raise ValueError("ابتدا دستور /warcommand شناسه deploy را ثبت کن؛ سپس محل استقرار را انتخاب کن.")
     if row.arrival_choice: raise ValueError("برای این لشکر قبلاً تصمیم ثبت شده است.")
-    if choice not in ("garrison","alliance","transfer","deploy"): raise ValueError("گزینه نامعتبر است.")
+    if choice not in ("garrison","alliance","transfer"): raise ValueError("گزینه باید garrison، alliance یا transfer باشد.")
+    from bot.game.engine import advance_world_clock
+    now=await advance_world_clock(session)
+    if row.arrival_at and now > row.arrival_at + timedelta(minutes=90):
+        raise ValueError("مهلت ۹۰ دقیقه‌ای انتخاب محل استقرار تمام شده است.")
     row.arrival_choice=choice
     if choice=="garrison":
         for kind,items in (row.assets or row.units).items():
@@ -117,7 +123,6 @@ async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lo
         if not defender: raise ValueError("برای اتحاد، قلعه مقصد باید لرد فعال داشته باشد.")
         session.add(MilitaryAlliance(castle_a_id=row.origin_castle_id,castle_b_id=row.target_castle_id,owner_a_lord_id=lord.id,owner_b_lord_id=defender.id,status="pending",war_expedition_id=row.id))
         row.status="resolving"
-    else: row.status="arrived"
     return row
 
 async def issue_war_command(session: AsyncSession, expedition_id: int, lord: Lord, command: str):
