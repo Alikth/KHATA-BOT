@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     starting_stone: int = 500
     starting_food: int = 1000
     admin_chat_id: int = 0
-    admin_session_minutes: int = 20
+    admin_session_minutes: int = Field(default=20, ge=1, le=240)
 
 @lru_cache
 def get_settings() -> Settings:
