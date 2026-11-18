@@ -72,6 +72,16 @@ async def main() -> None:
         env["PGPASSWORD"] = dst["password"]
 
     subprocess.run([pg_restore, "--list", archive], env=env, check=True, capture_output=True)
+    checksum_file = archive + ".sha256"
+    if os.path.isfile(checksum_file):
+        import hashlib
+        expected = open(checksum_file, encoding="utf-8").read().split()[0]
+        digest = hashlib.sha256()
+        with open(archive, "rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected:
+            raise RuntimeError("Backup SHA-256 verification failed.")
     await ensure_empty_and_verify(target, before=True)
     print(f"About to restore {archive} into EMPTY database {dst['database']}.")
     if input("Type RESTORE to continue: ").strip() != "RESTORE":
