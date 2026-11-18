@@ -3,7 +3,7 @@ Battle outcomes are deliberately admin-adjudicated, matching the website's scena
 """
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import (Castle, Lord, WarExpedition, ArmyUnit, EquipmentItem,
     FleetShip, GarrisonAsset, MilitaryAlliance, WarScenario, TroopTransferRequest, CastleEconomyState, GameState)
@@ -121,6 +121,14 @@ async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lo
     elif choice=="alliance":
         defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
         if not defender: raise ValueError("برای اتحاد، قلعه مقصد باید لرد فعال داشته باشد.")
+        existing=await session.scalar(select(MilitaryAlliance).where(
+            or_(
+                (MilitaryAlliance.castle_a_id==row.origin_castle_id) & (MilitaryAlliance.castle_b_id==row.target_castle_id),
+                (MilitaryAlliance.castle_a_id==row.target_castle_id) & (MilitaryAlliance.castle_b_id==row.origin_castle_id)
+            ),
+            MilitaryAlliance.status.in_(("pending","accepted"))
+        ).limit(1))
+        if existing: raise ValueError("بین این دو قلعه درخواست یا اتحاد فعالی وجود دارد.")
         session.add(MilitaryAlliance(castle_a_id=row.origin_castle_id,castle_b_id=row.target_castle_id,owner_a_lord_id=lord.id,owner_b_lord_id=defender.id,status="pending",war_expedition_id=row.id))
         row.status="resolving"
     return row
@@ -147,7 +155,7 @@ async def issue_war_command(session: AsyncSession, expedition_id: int, lord: Lor
 
 async def submit_scenario(session: AsyncSession, expedition_id: int, lord: Lord, text: str):
     row=await session.get(WarExpedition,expedition_id)
-    if not row or row.command!="attack" or not row.scenario_deadline_at: raise ValueError("برای این نبرد امکان ارسال سناریو وجود ندارد.")
+    if not row or row.command!="attack" or row.status!="resolving" or row.outcome or not row.scenario_deadline_at: raise ValueError("برای این نبرد امکان ارسال سناریو وجود ندارد.")
     from bot.game.engine import advance_world_clock
     now=await advance_world_clock(session)
     if now>=row.scenario_deadline_at: raise ValueError("مهلت ۲۴ ساعته ارسال سناریو تمام شده است.")
