@@ -90,8 +90,50 @@ async def arrive_expeditions(session: AsyncSession):
     world_state=await session.get(GameState,"world")
     if world_state is None or bool((world_state.value or {}).get("paused",True)): return []
     now=await advance_world_clock(session)
-    rows=(await session.scalars(select(WarExpedition).where(WarExpedition.status=="travelling",WarExpedition.arrival_at<=now).with_for_update())).all()
+
+    # Complete returns whose round-trip travel time has elapsed.
+    returning=(await session.scalars(select(WarExpedition).where(
+        WarExpedition.status=="returning",WarExpedition.return_at<=now
+    ).with_for_update())).all()
+    for row in returning:
+        for kind,items in (row.assets or row.units).items():
+            if kind not in ASSET_MODELS: continue
+            model,field=ASSET_MODELS[kind]
+            for key,nraw in items.items():
+                n=int(nraw)
+                if n<=0: continue
+                if row.asset_origin=="garrison":
+                    asset=await _asset_row(session,row.origin_castle_id,kind,key,row.attacker_lord_id)
+                    if asset: asset.count+=n
+                    else: session.add(GarrisonAsset(castle_id=row.origin_castle_id,owner_lord_id=row.attacker_lord_id,asset_kind=kind,asset_key=key,count=n))
+                else:
+                    asset=await session.scalar(select(model).where(
+                        model.castle_id==row.origin_castle_id,getattr(model,field)==key
+                    ).with_for_update())
+                    if asset: asset.count+=n
+                    else: session.add(model(castle_id=row.origin_castle_id,**{field:key},count=n))
+        row.status="completed"
+        result=dict(row.result or {})
+        result["auto_returned"]=True
+        row.result=result
+
+    rows=(await session.scalars(select(WarExpedition).where(
+        WarExpedition.status=="travelling",WarExpedition.arrival_at<=now
+    ).with_for_update())).all()
     for row in rows: row.status="arrived"
+
+    # A force left without an attack/siege command or a final deploy choice
+    # automatically starts its return trip after the site's 90-minute window.
+    expired=(await session.scalars(select(WarExpedition).where(
+        WarExpedition.status=="arrived",
+        WarExpedition.arrival_at<=now-timedelta(minutes=90),
+        WarExpedition.arrival_choice.is_(None),
+        or_(WarExpedition.command.is_(None),WarExpedition.command=="deploy")
+    ).with_for_update())).all()
+    for row in expired:
+        duration=(row.arrival_at-row.launched_at) if row.arrival_at and row.launched_at else timedelta(hours=1)
+        row.status="returning"
+        row.return_at=now+max(duration,timedelta(minutes=1))
     return rows
 
 async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lord, choice: str):
