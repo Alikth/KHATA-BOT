@@ -4,8 +4,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from bot.config import get_settings
-from bot.database.base import Base
 from bot.database.session import make_engine, make_session_factory
+from sqlalchemy import text
 from bot import handlers
 from bot.game.engine import weekly_settlement, advance_world_clock
 
@@ -15,8 +15,13 @@ async def main():
     if not cfg.bot_token:
         raise RuntimeError("BOT_TOKEN is missing in .env")
     engine = make_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    async with engine.connect() as conn:
+        try:
+            version = await conn.scalar(text("SELECT MAX(version) FROM schema_version"))
+        except Exception as exc:
+            raise RuntimeError("Database migrations are missing. Apply migrations 0001, 0002 and 0003 before starting the bot.") from exc
+        if version is None or int(version) < 3:
+            raise RuntimeError(f"Database schema is outdated (version={version}). Apply migrations 0001, 0002 and 0003 before starting the bot.")
     session_factory = make_session_factory(engine)
     async with session_factory() as session:
         from bot.database.models import GameState
