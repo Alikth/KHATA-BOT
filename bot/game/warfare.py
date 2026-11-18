@@ -108,10 +108,22 @@ async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lo
     row.arrival_choice=choice
     if choice=="garrison":
         for kind,items in (row.assets or row.units).items():
-            for key,n in items.items():
-                a=await _asset_row(session,row.target_castle_id,kind,key,lord.id)
-                if a: a.count+=int(n)
-                else: session.add(GarrisonAsset(castle_id=row.target_castle_id,owner_lord_id=lord.id,asset_kind=kind,asset_key=key,count=int(n)))
+            if kind not in ASSET_MODELS: raise ValueError("نوع دارایی استقرار نامعتبر است.")
+            model,field=ASSET_MODELS[kind]
+            for key,nraw in items.items():
+                n=int(nraw)
+                if n<=0: continue
+                if row.target_castle_id == lord.castle_id:
+                    # Returning assets to the owner's own castle restores regular inventory.
+                    asset=await session.scalar(select(model).where(
+                        model.castle_id==row.target_castle_id,getattr(model,field)==key
+                    ).with_for_update())
+                    if asset: asset.count+=n
+                    else: session.add(model(castle_id=row.target_castle_id,**{field:key},count=n))
+                else:
+                    asset=await _asset_row(session,row.target_castle_id,kind,key,lord.id)
+                    if asset: asset.count+=n
+                    else: session.add(GarrisonAsset(castle_id=row.target_castle_id,owner_lord_id=lord.id,asset_kind=kind,asset_key=key,count=n))
         row.status="completed"
     elif choice=="transfer":
         defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
