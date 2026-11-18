@@ -1,3 +1,4 @@
+import re
 from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery
@@ -373,11 +374,12 @@ from bot.game.warfare import (launch_expedition, arrive_expeditions, set_arrival
 @router.message(Command("march"))
 async def march_cmd(message: Message, session_factory, bot):
     """/march target-castle land|sea minutes army:swordsman=100,archer=20;equipment:ladder=2;fleet:transport=1"""
-    raw=(message.text or "").partition(" ")[2]
-    bits=raw.split(maxsplit=3)
-    if len(bits)<4:
-        await message.answer("فرمت: /march نام_قلعه_مقصد land|sea مدت_دقیقه army:swordsman=100,archer=20;equipment:ladder=2;fleet:transport=1");return
-    target,kind,minutes_s,assets_s=bits
+    raw=(message.text or "").partition(" ")[2].strip()
+    match=re.match(r"^(.+?)\s+(land|sea)\s+(\d+)\s+(.+)$",raw,re.IGNORECASE)
+    if not match:
+        await message.answer("فرمت: /march نام کامل قلعه land|sea مدت_دقیقه army:swordsman=100;equipment:ladder=2;fleet:transport=1");return
+    target,kind,minutes_s,assets_s=match.groups()
+    kind=kind.lower()
     assets={"army":{},"equipment":{},"fleet":{}}
     try:
         for section in assets_s.split(";"):
@@ -631,11 +633,13 @@ async def garrisons_cmd(message: Message, session_factory):
 
 @router.message(Command("marchgarrison"))
 async def march_garrison_cmd(message: Message, session_factory, bot):
-    p=(message.text or "").partition(" ")[2].split(maxsplit=4)
-    if len(p)<5: await message.answer("فرمت: /marchgarrison sourceCastleId target land|sea minutes army:swordsman=10;equipment:ladder=1;fleet:transport=1");return
+    raw=(message.text or "").partition(" ")[2].strip()
+    match=re.match(r"^(\d+)\s+(.+?)\s+(land|sea)\s+(\d+)\s+(.+)$",raw,re.IGNORECASE)
+    if not match: await message.answer("فرمت: /marchgarrison sourceCastleId نام کامل مقصد land|sea minutes army:swordsman=10;equipment:ladder=1;fleet:transport=1");return
     try:
-        source_id=int(p[0]);target=p[1];kind=p[2];minutes=int(p[3]);assets={"army":{},"equipment":{},"fleet":{}}
-        for section in p[4].split(";"):
+        source_s,target,kind,minutes_s,asset_text=match.groups()
+        source_id=int(source_s);kind=kind.lower();minutes=int(minutes_s);assets={"army":{},"equipment":{},"fleet":{}}
+        for section in asset_text.split(";"):
             if not section.strip():continue
             group,sep,items=section.partition(":")
             if not sep or group not in assets:raise ValueError("بخش دارایی نامعتبر است.")
