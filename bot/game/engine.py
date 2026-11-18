@@ -57,6 +57,16 @@ async def _spend(session, lord_id: int, cost: dict):
         if key not in rows or rows[key].amount < int(amount): raise ValueError(f"منابع کافی نیست: {RESOURCE_LABELS.get(key,key)}")
     for key, amount in cost.items(): rows[key].amount -= int(amount)
 
+async def _ensure_not_sieged(session, castle_id: int):
+    siege = await session.scalar(select(WarExpedition.id).where(
+        WarExpedition.target_castle_id == castle_id,
+        WarExpedition.command == "siege",
+        WarExpedition.status == "resolving",
+        WarExpedition.outcome.is_(None)
+    ).limit(1))
+    if siege:
+        raise ValueError("در زمان محاصره امکان ارتقای ساختمان، کارگاه، ادوات یا بندر وجود ندارد.")
+
 async def upgrade(session: AsyncSession, lord: Lord, category: str, key: str):
     if category=="production":
         defs=GENERAL_PRODUCTIONS.copy(); special=SPECIAL_PRODUCTIONS.get((await session.get(Castle,lord.castle_id)).region)
