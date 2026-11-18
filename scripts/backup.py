@@ -38,7 +38,7 @@ def main() -> None:
 
     directory = Path(settings.backup_dir).resolve()
     directory.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     archive = directory / f"khata-{stamp}.dump"
     env = os.environ.copy()
     if parts["password"]:
