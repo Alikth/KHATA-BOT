@@ -4,9 +4,9 @@ from aiogram.types import Message, CallbackQuery
 from sqlalchemy import select
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
-from time import monotonic
+from time import monotonic\nfrom datetime import datetime, timedelta, timezone
 from bot.config import get_settings
-from bot.database.models import Lord, TradeOffer, Castle
+from bot.database.models import Lord, TradeOffer, Castle, AdminLoginAttempt
 from bot.services import (get_lord, get_group, create_lord, create_castle_group, get_balances,
                           create_trade, resolve_trade, audit, is_world_paused, set_world_paused,
                           RESOURCE_NAMES)
@@ -163,21 +163,59 @@ async def admin_panel(message: Message, session_factory):
     cfg = get_settings()
     if not message.from_user or message.from_user.id != cfg.bot_owner_id or message.chat.id != cfg.admin_chat_id:
         await message.answer("دسترسی مجاز نیست."); return
+
     code = (message.text or "").partition(" ")[2].strip()
-    try:
-        if not code or not cfg.admin_password_hash:
-            raise VerifyMismatchError
-        PasswordHasher().verify(cfg.admin_password_hash, code)
-    except (VerifyMismatchError, VerificationError, Exception):
-        try: await message.delete()
-        except Exception: pass
-        await message.answer("کد دسترسی نامعتبر است یا تنظیم نشده."); return
     try: await message.delete()
     except Exception: pass
+
+    now = datetime.now(timezone.utc)
+    async with session_factory() as session, session.begin():
+        attempt = await session.scalar(
+            select(AdminLoginAttempt).where(
+                AdminLoginAttempt.telegram_user_id == message.from_user.id
+            ).with_for_update()
+        )
+        if attempt and attempt.locked_until and attempt.locked_until > now:
+            remaining = max(1, int((attempt.locked_until - now).total_seconds() // 60) + 1)
+            await message.answer(f"ورود موقتاً قفل شده است؛ {remaining} دقیقه دیگر تلاش کن.")
+            return
+
+    valid = False
+    if code and cfg.admin_password_hash:
+        try:
+            PasswordHasher().verify(cfg.admin_password_hash, code)
+            valid = True
+        except Exception:
+            valid = False
+
+    async with session_factory() as session, session.begin():
+        attempt = await session.scalar(
+            select(AdminLoginAttempt).where(
+                AdminLoginAttempt.telegram_user_id == message.from_user.id
+            ).with_for_update()
+        )
+        if attempt is None:
+            attempt = AdminLoginAttempt(telegram_user_id=message.from_user.id, failures=0)
+            session.add(attempt)
+            await session.flush()
+        if valid:
+            attempt.failures = 0
+            attempt.locked_until = None
+        else:
+            attempt.failures = (attempt.failures or 0) + 1
+            if attempt.failures >= 5:
+                attempt.failures = 0
+                attempt.locked_until = now + timedelta(minutes=15)
+
+    if not valid:
+        await message.answer("کد دسترسی نامعتبر است یا تنظیم نشده؛ پس از ۵ تلاش ناموفق، ورود ۱۵ دقیقه قفل می‌شود.")
+        return
+
     _admin_sessions[message.from_user.id] = monotonic() + (cfg.admin_session_minutes * 60)
     async with session_factory() as session:
         paused = await is_world_paused(session)
     await message.answer("🔐 پنل مدیریت KHATA-GAMES\n" + f"ساعت جهان: {'متوقف' if paused else 'فعال'}\n\n/pause — توقف جهان\n/resume — ادامه جهان\n/status — وضعیت جهان")
+
 
 async def admin_action(message: Message, session_factory, paused: bool | None):
     cfg = get_settings()
