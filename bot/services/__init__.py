@@ -51,7 +51,7 @@ async def get_balances(session: AsyncSession, lord_id: int):
     rows = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id == lord_id).order_by(ResourceBalance.resource_code))).all()
     return {row.resource_code: row.amount for row in rows}
 
-async def _assert_trade_allowed(session: AsyncSession, *lords: Lord):
+async def _assert_trade_allowed(session: AsyncSession, *lords: Lord, check_pending: bool = True):
     castle_ids = sorted({lord.castle_id for lord in lords})
     locked = await session.scalar(select(WarExpedition.id).where(
         WarExpedition.target_castle_id.in_(castle_ids),
@@ -60,13 +60,14 @@ async def _assert_trade_allowed(session: AsyncSession, *lords: Lord):
     ).limit(1))
     if locked:
         raise ValueError("تجارت برای قلعه‌ای که درگیر حمله یا محاصره است موقتاً قفل شده است.")
-    pending = (await session.scalars(select(TradeOffer.id).where(
-        TradeOffer.status == "pending",
-        or_(TradeOffer.sender_lord_id.in_([x.id for x in lords]),
-            TradeOffer.recipient_lord_id.in_([x.id for x in lords]))
-    ).limit(20))).all()
-    if len(pending) >= 20:
-        raise ValueError("سقف ۲۰ معامله در انتظار برای یکی از طرفین پر شده است.")
+    if check_pending:
+        pending = (await session.scalars(select(TradeOffer.id).where(
+            TradeOffer.status == "pending",
+            or_(TradeOffer.sender_lord_id.in_([x.id for x in lords]),
+                TradeOffer.recipient_lord_id.in_([x.id for x in lords]))
+        ).limit(20))).all()
+        if len(pending) >= 20:
+            raise ValueError("سقف ۲۰ معامله در انتظار برای یکی از طرفین پر شده است.")
 
 async def _credit_received(session: AsyncSession, lord_id: int, code: str, amount: int):
     amount = int(amount)
@@ -144,7 +145,7 @@ async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram
     sender = await session.get(Lord, offer.sender_lord_id)
     if not sender:
         raise ValueError("فرستنده معامله دیگر فعال نیست.")
-    await _assert_trade_allowed(session, sender, recipient)
+    await _assert_trade_allowed(session, sender, recipient, check_pending=False)
     if offer.offered_assets is not None or offer.requested_assets is not None:
         offered = offer.offered_assets or {}
         requested = offer.requested_assets or {}
