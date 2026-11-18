@@ -52,6 +52,9 @@ async def get_balances(session: AsyncSession, lord_id: int):
     return {row.resource_code: row.amount for row in rows}
 
 async def _assert_trade_allowed(session: AsyncSession, *lords: Lord, check_pending: bool = True):
+    lord_ids = sorted({lord.id for lord in lords})
+    # Serialize concurrent offer creation for the same accounts.
+    await session.scalars(select(Lord).where(Lord.id.in_(lord_ids)).order_by(Lord.id).with_for_update())
     castle_ids = sorted({lord.castle_id for lord in lords})
     locked = await session.scalar(select(WarExpedition.id).where(
         or_(WarExpedition.target_castle_id.in_(castle_ids),
