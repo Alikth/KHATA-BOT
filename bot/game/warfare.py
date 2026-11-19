@@ -107,7 +107,10 @@ async def arrive_expeditions(session: AsyncSession):
     rows=(await session.scalars(select(WarExpedition).where(WarExpedition.status=="travelling",WarExpedition.arrival_at<=now).with_for_update())).all()
     notifications=[]
     for row in rows:
-        if row.return_after_arrival:
+        if row.asset_origin=="fake":
+            row.status="completed"
+            notifications.append(row)
+        elif row.return_after_arrival:
             duration=max(60,(row.arrival_at-row.launched_at).total_seconds()) if row.launched_at and row.arrival_at else 3600
             row.status="returning"
             row.return_at=now+timedelta(seconds=duration)
