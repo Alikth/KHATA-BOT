@@ -10,6 +10,15 @@ from bot.database.models import (Castle, Lord, WarExpedition, ArmyUnit, Equipmen
 
 ASSET_MODELS = {"army": (ArmyUnit, "unit_key"), "equipment": (EquipmentItem, "item_key"), "fleet": (FleetShip, "ship_key")}
 
+def validate_expedition_origin(lord: Lord, origin_castle_id: int, use_garrison: bool) -> None:
+    """Prevent a lord from dispatching another castle's public inventory.
+
+    A lord may dispatch public inventory only from their own castle. At another
+    castle they may use only GarrisonAsset rows explicitly owned by that lord.
+    """
+    if not use_garrison and origin_castle_id != lord.castle_id:
+        raise ValueError("نمی‌توانی از موجودی عمومی قلعه‌ای که متعلق به تو نیست لشکر اعزام کنی.")
+
 async def _asset_row(session, castle_id, kind, key, owner_lord_id=None, lock=True):
     if owner_lord_id is not None:
         q=select(GarrisonAsset).where(GarrisonAsset.castle_id==castle_id,GarrisonAsset.owner_lord_id==owner_lord_id,GarrisonAsset.asset_kind==kind,GarrisonAsset.asset_key==key)
@@ -36,6 +45,7 @@ async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_nam
     if expedition_type not in ("land","sea"): raise ValueError("نوع لشکرکشی باید land یا sea باشد.")
     if not 1 <= duration_minutes <= 10080: raise ValueError("مدت سفر باید بین ۱ دقیقه تا ۷ روز باشد.")
     origin_id=source_castle_id or lord.castle_id
+    validate_expedition_origin(lord, origin_id, use_garrison)
     origin=await session.get(Castle,origin_id)
     if not origin: raise ValueError("قلعه مبدأ پیدا نشد.")
     target=await session.scalar(select(Castle).where(Castle.name.ilike(target_castle_name),Castle.active.is_(True)))
