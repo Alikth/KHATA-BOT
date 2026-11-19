@@ -2,6 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from bot.config import get_settings
 from bot.database.base import Base
@@ -29,7 +30,12 @@ async def main():
             else:
                 # Deliberately discard offline wall-clock time: the world pauses while the host is off.
                 await advance_world_clock(session, reset_real_tick=True)
-    bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    telegram_session = AiohttpSession(proxy=cfg.telegram_proxy) if cfg.telegram_proxy else None
+    bot = Bot(
+        cfg.bot_token,
+        session=telegram_session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher()
     dp.include_router(handlers.router)
     dp["session_factory"] = session_factory
@@ -46,7 +52,7 @@ async def main():
                         origin=await session.get(Castle,row.origin_castle_id)
                         target=await session.get(Castle,row.target_castle_id)
                         groups=(await session.scalars(select(GroupRegistration).where(GroupRegistration.castle_id.in_([row.origin_castle_id,row.target_castle_id]),GroupRegistration.enabled.is_(True)))).all()
-                        text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nمهاجم باید دستور بعدی را ثبت کند."
+                        text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\\n{origin.name} → {target.name}\\nمهاجم باید دستور بعدی را ثبت کند."
                         notices.extend((g.telegram_chat_id,text) for g in groups)
                 for chat_id,notice in notices:
                     try: await bot.send_message(chat_id,notice)
