@@ -1,7 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def main_menu(is_admin: bool = False):
-    """Single inline navigation; profile stays available and announcements are intentionally omitted."""
+    """Player navigation only. Admin access is automatic in the configured admin group."""
     rows = [
         [InlineKeyboardButton(text="👑 پروفایل و دارایی‌ها", callback_data="menu:assets"),
          InlineKeyboardButton(text="🏗 ساختمان‌ها", callback_data="menu:buildings")],
@@ -11,8 +11,6 @@ def main_menu(is_admin: bool = False):
          InlineKeyboardButton(text="🚩 لشکرکشی", callback_data="menu:war")],
         [InlineKeyboardButton(text="ℹ️ راهنما", callback_data="menu:help")],
     ]
-    if is_admin:
-        rows.append([InlineKeyboardButton(text="🔐 پنل سوپرادمین", callback_data="menu:admin")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -23,11 +21,18 @@ def section_back_menu(is_admin: bool = False):
 
 
 def admin_menu():
+    """Default owner control center shown by /start in the configured admin group."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏸ توقف جهان", callback_data="admin:pause"),
          InlineKeyboardButton(text="▶️ ادامه جهان", callback_data="admin:resume")],
         [InlineKeyboardButton(text="📊 وضعیت جهان", callback_data="admin:status")],
-        [InlineKeyboardButton(text="⬅️ منوی اصلی", callback_data="menu:back")],
+        [InlineKeyboardButton(text="🏰 قلعه‌ها", callback_data="admin:castles"),
+         InlineKeyboardButton(text="👑 لردها", callback_data="admin:lords")],
+        [InlineKeyboardButton(text="⚔️ جنگ‌ها", callback_data="admin:wars"),
+         InlineKeyboardButton(text="🤝 تجارت‌ها", callback_data="admin:trades")],
+        [InlineKeyboardButton(text="📜 سناریوها", callback_data="admin:scenarios"),
+         InlineKeyboardButton(text="🧾 گزارش‌ها", callback_data="admin:logs")],
+        [InlineKeyboardButton(text="🛠 راهنمای مدیریت", callback_data="admin:commands")],
     ])
 
 
