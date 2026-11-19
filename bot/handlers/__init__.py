@@ -25,10 +25,10 @@ async def publish_admin_audit(bot, actor_id: int, action: str, target: str = "",
     if not destination:
         return
     body = (
-        "🧾 <b>گزارش عملیات مدیریتی</b>\\n"
-        f"مدیر: <code>{actor_id}</code>\\n"
-        f"عملیات: <code>{escape(action)}</code>\\n"
-        f"هدف: <code>{escape(str(target or '-'))}</code>\\n"
+        "🧾 <b>گزارش عملیات مدیریتی</b>\n"
+        f"مدیر: <code>{actor_id}</code>\n"
+        f"عملیات: <code>{escape(action)}</code>\n"
+        f"هدف: <code>{escape(str(target or '-'))}</code>\n"
         f"جزئیات: {escape(str(details or '-'))}"
     )
     try:
@@ -71,18 +71,19 @@ async def persian_menu_callback(call: CallbackQuery):
     """Persian navigation for existing game commands; no business rules bypassed."""
     action = call.data.split(":", 1)[1]
     texts = {
-        "assets": "👑 **دارایی و پروفایل**\\nبرای مشاهده منابع و وضعیت لرد: /profile\\nبرای جزئیات اقتصاد و بدهی غذا: /economy",
-        "buildings": "🏗 **ساختمان‌ها**\\nمشاهده ساختمان‌ها و سطح تولید: /buildings\\nارتقای تولید: /upgrade production نام_ساختمان",
-        "army": "🛡 **ارتش و ادوات**\\nمشاهده ارتش، ادوات و ناوگان: /army\\nساخت ادوات: /equipment نام_ادوات\\nارتقای اسکله: /port upgrade",
-        "trade": "🤝 **تجارت**\\nپیشنهادهای دریافتی: /offers\\nمعامله ساده: /trade شناسه_تلگرام منبع مقدار منبع مقدار\\nمعامله چنددارایی: /tradepack",
-        "war": "🚩 **لشکرکشی**\\nثبت لشکرکشی: /march\\nلشکرهای رسیده: /arrivals\\nاتحادها: /alliances\\nپادگان‌ها: /garrisons",
-        "announcements": "📣 **اعلان‌ها**\\nاطلاعیه‌های رسمی بازی در گروه اعلان‌ها منتشر می‌شوند.",
-        "help": "ℹ️ **راهنمای بازی**\\nراهنمای کامل دستورات: /help\\nنام‌های فنی دستورات برای سازگاری داخلی انگلیسی می‌مانند؛ منوها و راهنمای بازیکنان فارسی هستند.",
-        "camps": "⚔️ **کمپ‌ها**\\nکمپ‌های عمومی: شمشیرزن، کماندار، نیزه‌دار و سواره‌نظام.\\nکمپ ویژه با توجه به منطقه قلعه تعیین می‌شود.\\nبرای دیدن سطح کمپ‌ها: /buildings\\nبرای ارتقا: /upgrade camp نام_کمپ یا /upgrade special_camp نام_کمپ",
+        "assets": "👑 <b>دارایی و پروفایل</b>\nبرای مشاهده منابع و وضعیت لرد: /profile\nبرای جزئیات اقتصاد و بدهی غذا: /economy",
+        "buildings": "🏗 <b>ساختمان‌ها</b>\nمشاهده ساختمان‌ها و سطح تولید: /buildings\nارتقای تولید: /upgrade production نام_ساختمان",
+        "army": "🛡 <b>ارتش و ادوات</b>\nمشاهده ارتش، ادوات و ناوگان: /army\nساخت ادوات: /equipment نام_ادوات\nارتقای اسکله: /port upgrade",
+        "trade": "🤝 <b>تجارت</b>\nپیشنهادهای دریافتی: /offers\nمعامله ساده: /trade شناسه_تلگرام منبع مقدار منبع مقدار\nمعامله چنددارایی: /tradepack",
+        "war": "🚩 <b>لشکرکشی</b>\nثبت لشکرکشی: /march\nلشکرهای رسیده: /arrivals\nاتحادها: /alliances\nپادگان‌ها: /garrisons",
+        "announcements": "📣 <b>اعلان‌ها</b>\nاطلاعیه‌های رسمی بازی در گروه اعلان‌ها منتشر می‌شوند.",
+        "help": "ℹ️ <b>راهنمای بازی</b>\nراهنمای کامل دستورات: /help\nنام‌های فنی دستورات برای سازگاری داخلی انگلیسی می‌مانند؛ منوها و راهنمای بازیکنان فارسی هستند.",
+        "camps": "⚔️ <b>کمپ‌ها</b>\nکمپ‌های عمومی: شمشیرزن، کماندار، نیزه‌دار و سواره‌نظام.\nکمپ ویژه با توجه به منطقه قلعه تعیین می‌شود.\nبرای دیدن سطح کمپ‌ها: /buildings\nبرای ارتقا: /upgrade camp نام_کمپ یا /upgrade special_camp نام_کمپ",
     };
     await call.answer()
     await call.message.answer(texts.get(action, "بخش درخواستی پیدا نشد."), reply_markup=main_menu())
-\n@router.message(F.text.regexp(r"(?i)^set lord$"))
+
+@router.message(F.text.regexp(r"(?i)^set lord$"))
 async def set_lord_reply(message: Message, session_factory):
     cfg = get_settings()
     if not message.from_user or message.from_user.id != cfg.bot_owner_id:
@@ -236,15 +237,15 @@ async def admin_action(message: Message, session_factory, bot, paused: bool | No
     return True
 
 @router.message(Command("pause"))
-async def pause_world(message: Message, session_factory):
+async def pause_world(message: Message, session_factory, bot):
     if not await admin_action(message, session_factory, bot, True): await message.answer("ابتدا از گروه مدیریت و با کد معتبر وارد پنل شو.")
 
 @router.message(Command("resume"))
-async def resume_world(message: Message, session_factory):
+async def resume_world(message: Message, session_factory, bot):
     if not await admin_action(message, session_factory, bot, False): await message.answer("ابتدا از گروه مدیریت و با کد معتبر وارد پنل شو.")
 
 @router.message(Command("status"))
-async def world_status(message: Message, session_factory):
+async def world_status(message: Message, session_factory, bot):
     if not await admin_action(message, session_factory, bot, None): await message.answer("دسترسی مجاز نیست.")
 
 # Website-aligned economy commands. Definitions are loaded from the uploaded site's catalog.
@@ -674,7 +675,8 @@ async def admin_trades_cmd(message: Message, session_factory):
         requested=x.requested_assets or {x.requested_resource:x.requested_amount}
         lines.append(f"#{x.id} | لرد {x.sender_lord_id} → {x.recipient_lord_id} | {offered} در برابر {requested} | {x.status}")
     await message.answer("📋 آخرین معاملات:\n"+"\n".join(lines))
-\n
+
+
 @router.message(Command("adminhelp"))
 async def admin_help_cmd(message: Message):
     cfg = get_settings()
@@ -682,11 +684,11 @@ async def admin_help_cmd(message: Message):
         await message.answer("ابتدا با /admin و کد معتبر وارد پنل شو.")
         return
     await message.answer(
-        "🔐 <b>راهنمای سوپرادمین</b>\\n"
-        "/status — وضعیت جهان\\n/pause و /resume — کنترل ساعت جهان\\n"
-        "/admincastles — فهرست قلعه‌ها\\n/adminwars — گزارش لشکرکشی‌ها\\n/admintrades — گزارش تجارت‌ها\\n"
-        "/adminscenarios — سناریوهای بررسی‌نشده\\n"
-        "/setresource شناسه_تلگرام منبع مقدار — تغییر موجودی هر لرد\\n"
+        "🔐 <b>راهنمای سوپرادمین</b>\n"
+        "/status — وضعیت جهان\n/pause و /resume — کنترل ساعت جهان\n"
+        "/admincastles — فهرست قلعه‌ها\n/adminwars — گزارش لشکرکشی‌ها\n/admintrades — گزارش تجارت‌ها\n"
+        "/adminscenarios — سناریوهای بررسی‌نشده\n"
+        "/setresource شناسه_تلگرام منبع مقدار — تغییر موجودی هر لرد\n"
         "/adminlogs — آخرین گزارش‌های مدیریتی"
     )
 
@@ -738,5 +740,79 @@ async def admin_logs_cmd(message: Message, session_factory):
     lines = ["🧾 آخرین عملیات مدیریتی:"]
     for row in rows:
         lines.append(f"#{row.id} | مدیر {row.actor_telegram_id} | {row.action} | هدف {row.target_id or '-'} | {row.details or '-'}")
-    await message.answer("\\n".join(lines))
+    await message.answer("\n".join(lines))
 
+
+
+@router.message(Command("setasset"))
+async def admin_set_asset_cmd(message: Message, session_factory, bot):
+    cfg = get_settings()
+    if not message.from_user or message.from_user.id != cfg.bot_owner_id or message.chat.id != cfg.admin_chat_id or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+        await message.answer("دسترسی سوپرادمین فعال نیست.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 5:
+        await message.answer("فرمت: /setasset شناسه_قلعه army|equipment|fleet|production|camp|special_camp کلید مقدار")
+        return
+    try:
+        castle_id, kind, key, amount = int(parts[1]), parts[2].lower(), parts[3], int(parts[4])
+        if amount < 0:
+            raise ValueError("مقدار نمی‌تواند منفی باشد.")
+        from bot.database.models import ArmyUnit, EquipmentItem, FleetShip, ProductionLevel, CampLevel, SpecialCampLevel
+        mapping = {
+            "army": (ArmyUnit, "unit_key", "count"),
+            "equipment": (EquipmentItem, "item_key", "count"),
+            "fleet": (FleetShip, "ship_key", "count"),
+            "production": (ProductionLevel, "production_key", "level"),
+            "camp": (CampLevel, "camp_key", "level"),
+            "special_camp": (SpecialCampLevel, "camp_key", "level"),
+        }
+        if kind not in mapping:
+            raise ValueError("نوع دارایی نامعتبر است.")
+        model, key_field, value_field = mapping[kind]
+        async with session_factory() as session, session.begin():
+            castle = await session.get(Castle, castle_id)
+            if not castle:
+                raise ValueError("قلعه پیدا نشد.")
+            condition = getattr(model, key_field) == key
+            row = await session.scalar(select(model).where(model.castle_id == castle_id, condition).with_for_update())
+            before = getattr(row, value_field) if row else 0
+            if row:
+                setattr(row, value_field, amount)
+            else:
+                row = model(castle_id=castle_id, **{key_field: key, value_field: amount})
+                session.add(row)
+            await audit(session, message.from_user.id, "superadmin_asset_changed", str(castle_id), f"{kind}/{key}: {before} -> {amount}")
+        await publish_admin_audit(bot, message.from_user.id, "superadmin_asset_changed", castle.name, f"{kind}/{key}: {before} -> {amount}")
+        await message.answer(f"✅ دارایی قلعه {castle.name} تغییر کرد: {kind}/{key}، {before} ← {amount}")
+    except (ValueError, TypeError) as exc:
+        await message.answer(str(exc))
+
+@router.message(Command("setlordcastle"))
+async def admin_set_lord_castle_cmd(message: Message, session_factory, bot):
+    cfg = get_settings()
+    if not message.from_user or message.from_user.id != cfg.bot_owner_id or message.chat.id != cfg.admin_chat_id or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+        await message.answer("دسترسی سوپرادمین فعال نیست.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 3:
+        await message.answer("فرمت: /setlordcastle شناسه_تلگرام شناسه_قلعه")
+        return
+    try:
+        telegram_id, castle_id = int(parts[1]), int(parts[2])
+        async with session_factory() as session, session.begin():
+            lord = await session.scalar(select(Lord).where(Lord.telegram_user_id == telegram_id).with_for_update())
+            castle = await session.get(Castle, castle_id)
+            if not lord or not castle:
+                raise ValueError("لرد یا قلعه پیدا نشد.")
+            other = await session.scalar(select(Lord).where(Lord.castle_id == castle_id, Lord.id != lord.id).with_for_update())
+            if other:
+                raise ValueError("این قلعه از قبل به لرد دیگری اختصاص دارد؛ ابتدا وضعیت مالک فعلی را تعیین تکلیف کن.")
+            old_castle = await session.get(Castle, lord.castle_id)
+            before = old_castle.name if old_castle else str(lord.castle_id)
+            lord.castle_id = castle_id
+            await audit(session, message.from_user.id, "superadmin_lord_castle_changed", str(lord.id), f"{before} -> {castle.name}")
+        await publish_admin_audit(bot, message.from_user.id, "superadmin_lord_castle_changed", lord.display_name, f"{before} -> {castle.name}")
+        await message.answer(f"✅ قلعه لرد {lord.display_name} از {before} به {castle.name} تغییر کرد.")
+    except (ValueError, TypeError) as exc:
+        await message.answer(str(exc))
