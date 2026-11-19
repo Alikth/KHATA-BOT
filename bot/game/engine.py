@@ -23,6 +23,44 @@ EQUIPMENT = CATALOG["EQUIPMENT"]
 STARTING_RESOURCES = {"peasants":500,"coins":5000,"wood":500,"stone":500,"iron":500,"meat":500,"fish":500,"grain":6000,"horses":0,"dragon_glass":0,"wildfire":0,"tar":0,"grapes":50}
 STARTING_ARMY = {"swordsman":500,"archer":200,"spearman":100,"cavalry":100}
 
+
+def calculate_food_debt_casualties(army: dict[str, int], food_debt: int) -> dict[str, int]:
+    """Allocate food-debt casualties proportionally using the largest-remainder method.
+
+    Ties are resolved by the original mapping order, making results deterministic.
+    The result always contains every army key and never removes more units than exist.
+    """
+    counts = {key: max(0, int(amount)) for key, amount in army.items()}
+    casualties = {key: 0 for key in counts}
+    total_troops = sum(counts.values())
+    debt = max(0, int(food_debt))
+
+    if total_troops == 0 or debt == 0:
+        return casualties
+
+    losses = min(debt, total_troops)
+    exact_shares = {
+        key: losses * count / total_troops
+        for key, count in counts.items()
+    }
+    for key, share in exact_shares.items():
+        casualties[key] = min(counts[key], math.floor(share))
+
+    remaining = losses - sum(casualties.values())
+    order = {key: index for index, key in enumerate(counts)}
+    ranked = sorted(
+        counts,
+        key=lambda key: (-(exact_shares[key] - math.floor(exact_shares[key])), order[key]),
+    )
+    for key in ranked:
+        if remaining <= 0:
+            break
+        if casualties[key] < counts[key]:
+            casualties[key] += 1
+            remaining -= 1
+
+    return casualties
+
 async def initialize_castle(session: AsyncSession, castle: Castle):
     for key, amount in STARTING_RESOURCES.items():
         session.add(ResourceBalance(lord_id=0, resource_code=key, amount=amount)) if False else None
