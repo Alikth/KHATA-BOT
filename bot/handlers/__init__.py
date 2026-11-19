@@ -500,7 +500,7 @@ async def upgrade_cmd(message: Message, session_factory):
             else:
                 level,definition=await engine_upgrade(session,lord,parts[1],parts[2])
             await audit(session,message.from_user.id,"building_upgraded",str(lord.castle_id),f"{parts[1]}:{parts[2]}:{level}")
-        except ValueError as e: await message.answer(str(e)); return
+        except (ValueError, SiteApiError) as e: await message.answer(str(e)); return
     await message.answer(f"✅ {definition['label']} به سطح {level} ارتقا یافت.\nهزینه: " + "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()))
 
 @router.message(Command("army"))
