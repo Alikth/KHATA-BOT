@@ -172,6 +172,10 @@ async def fetch_site_events(after_cursor: int = 0) -> dict:
     return await _request("GET", f"/api/integration/v1/events?after={max(0, int(after_cursor))}&limit=100")
 
 
+async def acknowledge_site_events(cursor: int) -> None:
+    await _request("POST", "/api/integration/v1/events/ack", payload={"cursor": max(0, int(cursor))})
+
+
 async def synchronize_site_events(session_factory) -> int:
     """Consume website change events and refresh assigned castle snapshots in PostgreSQL."""
     if not configured():
@@ -186,6 +190,7 @@ async def synchronize_site_events(session_factory) -> int:
     response = await fetch_site_events(cursor)
     events = response.get("events") or []
     if not events:
+        await acknowledge_site_events(cursor)
         return 0
 
     applied = 0
@@ -216,4 +221,5 @@ async def synchronize_site_events(session_factory) -> int:
         except Exception:
             # Do not advance past a failed event; the next polling cycle retries it.
             raise
+    await acknowledge_site_events(cursor)
     return applied
