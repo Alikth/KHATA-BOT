@@ -67,8 +67,10 @@ async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_nam
     busy=await session.scalar(select(WarExpedition.id).where(WarExpedition.target_castle_id==target.id,WarExpedition.status=="resolving").limit(1))
     if busy: raise ValueError("این قلعه در حال حاضر درگیر نبرد یا محاصره دیگری است.")
     if expedition_type=="sea":
-        economy=await session.get(CastleEconomyState,origin.id)
-        if not economy or not economy.port_enabled: raise ValueError("قلعه مبدأ بندر فعال ندارد.")
+        origin_economy=await session.get(CastleEconomyState,origin.id)
+        target_economy=await session.get(CastleEconomyState,target.id)
+        if not origin_economy or not origin_economy.port_enabled: raise ValueError("قلعه مبدأ بندر فعال ندارد.")
+        if not target_economy or not target_economy.port_enabled: raise ValueError("قلعه مقصد بندر فعال ندارد؛ مسیر دریایی فقط بین دو قلعه بندردار مجاز است.")
     clean={k:{} for k in ("army","equipment","fleet")}
     for kind in ("army","equipment","fleet"):
         if expedition_type=="land" and kind=="fleet": continue
