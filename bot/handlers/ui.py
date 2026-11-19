@@ -330,7 +330,7 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
                 available={"army":{r.unit_key:r.count for r in army},"equipment":{r.item_key:r.count for r in gear},"fleet":{r.ship_key:r.count for r in fleet}}
             await state.update_data(war_target=target.name,war_available=available)
             await state.set_state(UIFlow.war_assets)
-            await call.message.edit_text("نیرو و ادوات را وارد کن. نمونه: army:swordsman=100,archer=20;equipment:ladder=2\nموجودی قابل اعزام:\\n"+_format_available(available))
+            await call.message.edit_text("نیرو و ادوات را وارد کن. نمونه: army:swordsman=100,archer=20;equipment:ladder=2\nموجودی قابل اعزام:\n"+_format_available(available))
             await call.answer(); return
         if action=="arrival" and len(parts)==3:
             expedition_id=int(parts[2])
