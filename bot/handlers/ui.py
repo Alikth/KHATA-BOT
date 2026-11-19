@@ -230,6 +230,8 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
             submitted = set((await session.scalars(select(WarScenario.expedition_id).where(WarScenario.lord_id==lord.id))).all())
             for row in rows:
                 body += f"\n\n#{row.id} → قلعه {row.target_castle_id} | {row.status} | رسیدن: {row.arrival_at:%Y-%m-%d %H:%M UTC}" if row.arrival_at else f"\n#{row.id} | {row.status}"
+                if row.return_at:
+                    body += f" | بازگشت: {row.return_at:%Y-%m-%d %H:%M UTC}"
                 if row.attacker_lord_id==lord.id and row.status == "arrived" and not row.command:
                     buttons.append([InlineKeyboardButton(text=f"دستور لشکر #{row.id}", callback_data=f"ui:arrival:{row.id}")])
                 if row.command == "attack" and row.status == "resolving" and row.id not in submitted:
