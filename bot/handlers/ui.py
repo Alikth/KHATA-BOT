@@ -611,14 +611,13 @@ async def admin_ui(call:CallbackQuery,session_factory,state:FSMContext,bot):
             async with session_factory() as session:
                 lord_ids=(await session.scalars(select(Lord.id).where(Lord.castle_id==castle_id))).all()
                 rows=(await session.scalars(select(TradeOffer).where(
-                    TradeOffer.status=="completed",
                     (TradeOffer.sender_lord_id.in_(lord_ids)) | (TradeOffer.recipient_lord_id.in_(lord_ids))
-                ).order_by(TradeOffer.id.desc()).limit(20))).all()
+                ).order_by(TradeOffer.id.desc()).limit(30))).all()
                 castle=await session.get(Castle,castle_id)
             lines=[f"گزارش معاملات قلعه {castle.name if castle else castle_id}:"]
             for item in rows:
-                lines.append(f"#{item.id} | {item.sender_lord_id} → {item.recipient_lord_id} | {item.offered_assets or {item.offered_resource:item.offered_amount}} ↔ {item.requested_assets or {item.requested_resource:item.requested_amount}}")
-            kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"↩️ بازگردانی معامله #{item.id}",callback_data=f"adminui:rollback:{item.id}")] for item in rows]+[[InlineKeyboardButton(text="⬅️ قلعه‌ها",callback_data="adminui:trades")]])
+                lines.append(f"#{item.id} | {item.sender_lord_id} → {item.recipient_lord_id} | وضعیت: {item.status} | {item.offered_assets or {item.offered_resource:item.offered_amount}} ↔ {item.requested_assets or {item.requested_resource:item.requested_amount}}")
+            kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"↩️ بازگردانی معامله #{item.id}",callback_data=f"adminui:rollback:{item.id}")] for item in rows if item.status=="completed"]+[[InlineKeyboardButton(text="⬅️ قلعه‌ها",callback_data="adminui:trades")]])
             await call.message.edit_text("\\n".join(lines) if rows else lines[0]+"\\nمعامله تکمیل‌شده‌ای وجود ندارد.",reply_markup=kb);await call.answer();return
         if action[0]=="home":
             await call.message.edit_text(await _admin_panel_text(session_factory),reply_markup=admin_menu());await call.answer();return
