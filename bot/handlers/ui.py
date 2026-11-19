@@ -633,8 +633,15 @@ async def admin_ui(call:CallbackQuery,session_factory,state:FSMContext,bot):
                     if not src or not dst or src.amount<n: raise ValueError(f"بازگردانی ممکن نیست؛ موجودی {code} نزد فرستنده کافی نیست.")
                     src.amount-=n; dst.amount+=n
                 offer.status="cancelled"
+                sender_group=await session.scalar(select(GroupRegistration).where(GroupRegistration.castle_id==sender.castle_id,GroupRegistration.enabled.is_(True)))
+                recipient_group=await session.scalar(select(GroupRegistration).where(GroupRegistration.castle_id==recipient.castle_id,GroupRegistration.enabled.is_(True)))
+                notify_chats={g.telegram_chat_id for g in (sender_group,recipient_group) if g}
                 await audit(session,call.from_user.id,"trade_rolled_back",str(offer.id))
-            await call.message.edit_text(f"معامله #{offer_id} برگردانده شد.",reply_markup=admin_menu());await call.answer();return
+            await call.message.edit_text(f"معامله #{offer_id} برگردانده شد.",reply_markup=admin_menu())
+            for chat_id in notify_chats:
+                try: await bot.send_message(chat_id,f"↩️ معامله #{offer_id} توسط مدیریت بازگردانی شد؛ موجودی دو طرف اصلاح شد.")
+                except Exception: pass
+            await call.answer();return
         if action[0]=="trades":
             async with session_factory() as session:
                 castles=(await session.scalars(select(Castle).order_by(Castle.region,Castle.name))).all()
