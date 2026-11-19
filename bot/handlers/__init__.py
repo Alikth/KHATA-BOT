@@ -109,6 +109,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
             )
             return
         castle = await session.get(Castle, lord.castle_id) if lord else None
+        reply_markup = section_back_menu()
 
         if action == "assets":
             from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState
@@ -162,6 +163,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
             lines = [f"🏰 {escape(castle.name) if castle else 'قلعه'}"]
             if action == "buildings":
                 lines.append("🏗 ساختمان‌های تولید")
+                buttons = []
                 for row in productions:
                     definition = GENERAL_PRODUCTIONS.get(row.production_key)
                     if not definition:
@@ -169,17 +171,26 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
                         definition = candidate if candidate.get("key") == row.production_key else None
                     if definition:
                         lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+                        if row.level < int(definition["max"]):
+                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:production:{row.production_key}")])
+                reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons + [[InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")]])
             if action == "camps":
                 lines.append("⚔️ کمپ‌ها")
+                buttons = []
                 for row in camps:
                     definition = GENERAL_CAMPS.get(row.camp_key)
                     if definition:
                         lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+                        if row.level < int(definition["max"]):
+                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:camp:{row.camp_key}")])
                 for row in special:
                     definitions = SPECIAL_CAMPS.get(castle.region, []) if castle else []
                     definition = next((item for item in definitions if item["key"] == row.camp_key), None)
                     if definition:
                         lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+                        if row.level < int(definition["max"]):
+                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:special_camp:{row.camp_key}")])
+                reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons + [[InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")]])
             body = "\n".join(lines)
         elif action == "army":
             from bot.database.models import ArmyUnit, EquipmentItem, FleetShip
@@ -227,7 +238,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         else:
             body = "بخش درخواستی در دسترس نیست."
 
-    await _safe_edit_text(call.message, body, reply_markup=section_back_menu())
+    await _safe_edit_text(call.message, body, reply_markup=reply_markup)
 
 @router.message(F.text.regexp(r"(?i)^set lord$"))
 async def set_lord_reply(message: Message, session_factory):
