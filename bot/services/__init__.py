@@ -64,6 +64,7 @@ async def get_balances(session: AsyncSession, lord_id: int):
     return {row.resource_code: row.amount for row in rows}
 
 async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, offered_resource: str, offered_amount: int, requested_resource: str, requested_amount: int):
+    from bot.game.engine import ensure_castle_not_under_siege
     if offered_resource not in RESOURCE_NAMES or requested_resource not in RESOURCE_NAMES:
         raise ValueError("منبع نامعتبر است.")
     if offered_amount <= 0 or requested_amount <= 0:
@@ -71,6 +72,8 @@ async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, o
     recipient = await get_lord(session, recipient_id)
     if not recipient or recipient.id == sender.id:
         raise ValueError("بازیکن مقصد معتبر نیست.")
+    await ensure_castle_not_under_siege(session, sender.castle_id)
+    await ensure_castle_not_under_siege(session, recipient.castle_id)
     balances = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id == sender.id).order_by(ResourceBalance.resource_code).with_for_update())).all()
     if {r.resource_code:r.amount for r in balances}.get(offered_resource, 0) < offered_amount:
         raise ValueError("منابع کافی برای پیشنهاد معامله نداری.")
@@ -80,8 +83,11 @@ async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, o
     return offer
 
 async def create_trade_bundle(session: AsyncSession, sender: Lord, recipient_id: int, offered: dict, requested: dict):
+    from bot.game.engine import ensure_castle_not_under_siege
     recipient=await get_lord(session,recipient_id)
     if not recipient or recipient.id==sender.id: raise ValueError("بازیکن مقصد معتبر نیست.")
+    await ensure_castle_not_under_siege(session, sender.castle_id)
+    await ensure_castle_not_under_siege(session, recipient.castle_id)
     if not offered or not requested: raise ValueError("هر دو طرف معامله باید دارایی داشته باشند.")
     if len(offered)>20 or len(requested)>20: raise ValueError("حداکثر ۲۰ نوع دارایی در هر سمت مجاز است.")
     rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id==sender.id).order_by(ResourceBalance.resource_code).with_for_update())).all()
@@ -122,6 +128,12 @@ async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram
     if not accept:
         offer.status = "rejected"
         return offer
+    from bot.game.engine import ensure_castle_not_under_siege
+    sender = await session.get(Lord, offer.sender_lord_id)
+    if not sender:
+        raise ValueError("فرستنده پیشنهاد دیگر لرد فعالی ندارد.")
+    await ensure_castle_not_under_siege(session, sender.castle_id)
+    await ensure_castle_not_under_siege(session, recipient.castle_id)
     if offer.offered_assets is not None or offer.requested_assets is not None:
         offered = offer.offered_assets or {}
         requested = offer.requested_assets or {}
