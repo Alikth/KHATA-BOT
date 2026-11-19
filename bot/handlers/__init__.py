@@ -79,6 +79,7 @@ async def help_cmd(message: Message, session_factory):
     await message.answer(
         "دستورات گروه قلعه:\n/profile — وضعیت لرد و منابع\n"
         "/trade <telegram_id> <resource> <amount> <resource> <amount> — پیشنهاد تجارت\n"
+        "/canceloffer <offer_id> — لغو پیشنهاد تجارت خودت\n"
         "/offers — پیشنهادهای دریافتی\n"
         "/economy — اقتصاد و بدهی غذا\n/buildings — ساختمان‌ها و کمپ‌ها\n/upgrade — ارتقای تولید یا کمپ\n/army — ارتش، ادوات و ناوگان\n/workshop — کارگاه\n/equipment — ساخت ادوات\n/port — ارتقای اسکله\n"
         "منابع: " + ", ".join(RESOURCE_NAMES.keys()) +
@@ -335,6 +336,9 @@ async def offers(message: Message, session_factory):
 @router.callback_query(F.data.startswith("trade:"))
 async def trade_callback(call: CallbackQuery, bot, session_factory):
     _, action, offer_id = call.data.split(":")
+    if action not in ("accept", "reject"):
+        await call.answer("عملیات نامعتبر است.", show_alert=True)
+        return
     try:
         async with session_factory() as session, session.begin():
             recipient_before = await get_lord(session, call.from_user.id)
