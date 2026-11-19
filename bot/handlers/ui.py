@@ -185,9 +185,12 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
         elif action == "trade":
             body += "🤝 <b>تجارت</b>\nپیشنهادهای دریافتی و ارسال پیشنهاد جدید:"
             offers = (await session.scalars(select(TradeOffer).where(TradeOffer.recipient_lord_id==lord.id,TradeOffer.status=="pending").order_by(TradeOffer.id.desc()).limit(8))).all()
+            sent_offers = (await session.scalars(select(TradeOffer).where(TradeOffer.sender_lord_id==lord.id,TradeOffer.status=="pending").order_by(TradeOffer.id.desc()).limit(8))).all()
             buttons = []
             for offer in offers:
                 buttons.append([InlineKeyboardButton(text=f"پیشنهاد #{offer.id} — پذیرش/رد", callback_data=f"trade:accept:{offer.id}")])
+            for offer in sent_offers:
+                buttons.append([InlineKeyboardButton(text=f"❌ لغو پیشنهاد ارسالی #{offer.id}",callback_data=f"ui:tradecancel:{offer.id}")])
             buttons.append([InlineKeyboardButton(text="➕ ایجاد پیشنهاد تجارت", callback_data="ui:trade:new")])
             buttons.append([InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")])
             markup = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -241,6 +244,14 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext):
             if not rows: raise ValueError("قلعه دیگری با لرد فعال برای تجارت وجود ندارد.")
             kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🏰 {c.name}",callback_data=f"ui:trade:target:{l.id}")] for c,l in rows]+[[InlineKeyboardButton(text="لغو",callback_data="menu:trade")]])
             await call.message.edit_text("قلعه مقصد تجارت را انتخاب کن:",reply_markup=kb); await call.answer(); return
+        if action=="tradecancel" and len(parts)==3:
+            async with session_factory() as session,session.begin():
+                lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
+                offer=await session.scalar(select(TradeOffer).where(TradeOffer.id==int(parts[2])).with_for_update())
+                if not offer or offer.sender_lord_id!=lord.id or offer.status!="pending": raise ValueError("فقط پیشنهاد معلق خودت را می‌توانی لغو کنی.")
+                offer.status="cancelled"
+                await audit(session,call.from_user.id,"trade_offer_cancelled",str(offer.id))
+            await call.message.edit_text(f"پیشنهاد تجارت #{parts[2]} لغو شد.",reply_markup=_back());await call.answer();return
         if action=="trade" and len(parts)==4 and parts[2]=="target":
             async with session_factory() as session:
                 lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
@@ -351,11 +362,14 @@ async def trade_offer_input(message: Message,state:FSMContext,session_factory):
     try:
         offered=_parse_quantities(message.text or "")
         await state.update_data(trade_offered=offered)
+        data=await state.get_data()
         async with session_factory() as session:
             lord,castle=await _player(session,message.from_user.id,message.chat.id)
             balances=await get_balances(session,lord.id)
+            recipient=await get_lord(session,int(data["trade_target"]))
+            target_balances=await get_balances(session,recipient.id) if recipient else {}
         await state.set_state(UIFlow.trade_request)
-        await message.answer("اکنون منابعی را که در مقابل می‌خواهی دریافت کنی وارد کن. نمونه: iron=20,stone=50\nموجودی فعلی: "+", ".join(f"{k}={int(v)}" for k,v in balances.items()))
+        await message.answer("اکنون منابعی را که در مقابل می‌خواهی دریافت کنی وارد کن. نمونه: iron=20,stone=50\nموجودی تو: "+", ".join(f"{k}={int(v)}" for k,v in balances.items())+"\nموجودی فعلی قلعه مقصد: "+", ".join(f"{k}={int(v)}" for k,v in target_balances.items()))
     except ValueError as exc: await message.answer(str(exc))
 
 
