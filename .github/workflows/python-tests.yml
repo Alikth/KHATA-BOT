@@ -2,7 +2,7 @@ name: Python tests
 
 on:
   push:
-    branches: ["feature/persian-ui-superadmin-audit"]
+    branches: ["feature/complete-independent-bot"]
   pull_request:
     branches: ["main"]
 
