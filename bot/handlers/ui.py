@@ -435,7 +435,7 @@ async def war_assets_input(message:Message,state:FSMContext):
         if data.get("war_type")=="land" and assets["fleet"]: raise ValueError("در لشکرکشی زمینی نمی‌توان کشتی انتخاب کرد.")
         await state.update_data(war_assets=assets)
         await state.set_state(UIFlow.war_duration)
-        await message.answer("مدت سفر را به دقیقه وارد کن (۱ تا ۱۰۰۸۰).")
+        await message.answer("مدت سفر را به شکل ساعت:دقیقه وارد کن؛ نمونه 1:30. عدد دقیقه هم پذیرفته می‌شود.")
     except ValueError as exc: await message.answer(str(exc))
 
 
