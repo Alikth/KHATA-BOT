@@ -11,7 +11,6 @@ from bot.services import (get_lord, get_group, create_lord, create_castle_group,
                           create_trade, resolve_trade, audit, is_world_paused, set_world_paused,
                           RESOURCE_NAMES)
 from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_menu
-from bot.integrations.site_api import SiteApiError
 
 router = Router()
 
@@ -96,10 +95,6 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         return
 
     cfg = get_settings()
-    from bot.integrations.site_api import configured
-    if action in ("assets", "buildings", "camps", "army", "trade", "war") and not configured():
-        await _safe_edit_text(call.message, "برای نمایش اطلاعات قابل‌اعتماد، ابتدا اتصال امن سایت را در تنظیمات بات فعال کن.", reply_markup=section_back_menu())
-        return
     if action == "back":
         await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
         return
@@ -117,14 +112,6 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
 
         if action == "assets":
             from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState
-            from bot.integrations.site_api import configured, fetch_site_snapshot, sync_snapshot_to_postgres, SiteApiError
-            if configured():
-                try:
-                    snapshot = await fetch_site_snapshot(call.from_user.id, castle.name)
-                    await sync_snapshot_to_postgres(session, lord, snapshot)
-                except SiteApiError as exc:
-                    await _safe_edit_text(call.message, f"دریافت اطلاعات به‌روز سایت ناموفق بود: {escape(str(exc))}", reply_markup=section_back_menu())
-                    return
             balances = await get_balances(session, lord.id)
             production = (await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id==lord.castle_id).order_by(ProductionLevel.production_key))).all()
             camps = (await session.scalars(select(CampLevel).where(CampLevel.castle_id==lord.castle_id).order_by(CampLevel.camp_key))).all()
@@ -247,10 +234,6 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
 @router.message(F.text.regexp(r"(?i)^set lord$"))
 async def set_lord_reply(message: Message, session_factory):
     cfg = get_settings()
-    from bot.integrations.site_api import configured
-    if not configured():
-        await message.answer("اتصال امن بات به سایت هنوز تنظیم نشده است؛ ابتدا SITE_API_URL و SITE_API_SECRET را تنظیم کن. هیچ موجودی محلی به‌عنوان موجودی واقعی ثبت نشد.")
-        return
     if not message.from_user or message.from_user.id != cfg.bot_owner_id:
         return
     if not message.reply_to_message or not message.reply_to_message.from_user:
@@ -259,29 +242,23 @@ async def set_lord_reply(message: Message, session_factory):
     async with session_factory() as session, session.begin():
         group = await get_group(session, message.chat.id)
         if not group:
-            await message.answer("این گروه هنوز به قلعه متصل نشده است."); return
+            await message.answer("این گروه هنوز به قلعه‌ای متصل نشده است.")
+            return
         target = message.reply_to_message.from_user
-        site_assignment_created = False
         try:
-            lord = await create_lord(session, target.id, target.full_name, target.username, cfg.bot_owner_id, group.castle_id)
-            from bot.integrations.site_api import configured, assign_lord_on_site, sync_snapshot_to_postgres, SiteApiError
-            if configured():
-                snapshot = await assign_lord_on_site(target.id, (await session.get(Castle, group.castle_id)).name, cfg.bot_owner_id)
-                site_assignment_created = True
-                await sync_snapshot_to_postgres(session, lord, snapshot)
-            await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id), f"castle_id={group.castle_id}; chat_id={message.chat.id}")
+            lord = await create_lord(
+                session, target.id, target.full_name, target.username,
+                cfg.bot_owner_id, group.castle_id
+            )
+            await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id),
+                        f"castle_id={group.castle_id}; chat_id={message.chat.id}")
             castle = await session.get(Castle, group.castle_id)
-        except (ValueError, SiteApiError) as exc:
-            await session.rollback()
-            try:
-                from bot.integrations.site_api import revoke_lord_on_site
-                if site_assignment_created:
-                    await revoke_lord_on_site(target.id)
-            except SiteApiError:
-                import logging
-                logging.exception("Could not roll back website lord assignment")
-            await message.answer(str(exc)); return
-    await message.answer(f"✅ لرد با موفقیت انتخاب شد.\n🏰 قلعه: {castle.name}\n👑 لرد: {target.full_name}")
+        except ValueError as exc:
+            await message.answer(str(exc))
+            return
+    await message.answer(
+        f"✅ لرد با موفقیت در دیتابیس مستقل ربات ثبت شد.\\n🏰 قلعه: {castle.name}\\n👑 لرد: {target.full_name}"
+    )
 
 @router.message(Command("registercastle"))
 async def register_castle(message: Message, session_factory):
