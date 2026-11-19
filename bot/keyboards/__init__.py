@@ -33,6 +33,12 @@ def admin_menu():
         [InlineKeyboardButton(text="📜 سناریوها", callback_data="admin:scenarios"),
          InlineKeyboardButton(text="🧾 گزارش‌ها", callback_data="admin:logs")],
         [InlineKeyboardButton(text="🛠 راهنمای مدیریت", callback_data="admin:commands")],
+        [InlineKeyboardButton(text="📦 اعمال تولید هفتگی", callback_data="adminui:weekly")],
+        [InlineKeyboardButton(text="🔒/🔓 قفل لشکرکشی", callback_data="adminui:toggle:expeditions"),
+         InlineKeyboardButton(text="🔒/🔓 قفل تجارت", callback_data="adminui:toggle:trades")],
+        [InlineKeyboardButton(text="🏰 قفل انتخاب قلعه", callback_data="adminui:toggle:castle")],
+        [InlineKeyboardButton(text="⏱ تنظیم مهلت‌ها", callback_data="adminui:deadlines")],
+        [InlineKeyboardButton(text="↩️ گزارش و بازگردانی تجارت", callback_data="adminui:trades")],
     ])
 
 
