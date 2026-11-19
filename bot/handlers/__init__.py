@@ -825,7 +825,18 @@ async def alliances_cmd(message: Message, session_factory):
         if not group:return
         lord=await get_lord(session,message.from_user.id)
         if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی.");return
-        rows=(await session.scalars(select(MilitaryAlliance).where(MilitaryAlliance.owner_b_lord_id==lord.id,MilitaryAlliance.status=="pending"))).all()
+        candidates=(await session.scalars(select(MilitaryAlliance).where(
+            MilitaryAlliance.status=="pending",
+            (MilitaryAlliance.owner_a_lord_id==lord.id) | (MilitaryAlliance.owner_b_lord_id==lord.id)
+        ))).all()
+        rows=[]
+        for item in candidates:
+            expedition=await session.get(WarExpedition,item.war_expedition_id) if item.war_expedition_id else None
+            if not expedition:
+                continue
+            target_owner_id=item.owner_a_lord_id if item.castle_a_id==expedition.target_castle_id else item.owner_b_lord_id
+            if target_owner_id==lord.id:
+                rows.append(item)
     if not rows: await message.answer("درخواست اتحاد معلقی نداری.");return
     await message.answer("درخواست‌ها:\n"+"\n".join(f"#{x.id}: /alliance {x.id} accept یا /alliance {x.id} reject" for x in rows))
 
