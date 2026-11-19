@@ -80,9 +80,12 @@ async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, o
         raise ValueError("بازیکن مقصد معتبر نیست.")
     await ensure_castle_not_under_siege(session, sender.castle_id)
     await ensure_castle_not_under_siege(session, recipient.castle_id)
-    balances = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id == sender.id).order_by(ResourceBalance.resource_code).with_for_update())).all()
-    if {r.resource_code:r.amount for r in balances}.get(offered_resource, 0) < offered_amount:
+    balances = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_([sender.id, recipient.id])).order_by(ResourceBalance.lord_id, ResourceBalance.resource_code).with_for_update())).all()
+    lookup = {(r.lord_id, r.resource_code): r.amount for r in balances}
+    if lookup.get((sender.id, offered_resource), 0) < offered_amount:
         raise ValueError("منابع کافی برای پیشنهاد معامله نداری.")
+    if lookup.get((recipient.id, requested_resource), 0) < requested_amount:
+        raise ValueError("قلعه مقصد موجودی کافی برای پرداخت منبع درخواستی ندارد.")
     offer = TradeOffer(sender_lord_id=sender.id, recipient_lord_id=recipient.id, offered_resource=offered_resource, offered_amount=offered_amount, requested_resource=requested_resource, requested_amount=requested_amount, status="pending")
     session.add(offer)
     await session.flush()
@@ -99,14 +102,15 @@ async def create_trade_bundle(session: AsyncSession, sender: Lord, recipient_id:
     await ensure_castle_not_under_siege(session, recipient.castle_id)
     if not offered or not requested: raise ValueError("هر دو طرف معامله باید دارایی داشته باشند.")
     if len(offered)>20 or len(requested)>20: raise ValueError("حداکثر ۲۰ نوع دارایی در هر سمت مجاز است.")
-    rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id==sender.id).order_by(ResourceBalance.resource_code).with_for_update())).all()
-    balance={r.resource_code:r.amount for r in rows}
+    ids=sorted([sender.id,recipient.id])
+    rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_(ids)).order_by(ResourceBalance.lord_id,ResourceBalance.resource_code).with_for_update())).all()
+    balance={(r.lord_id,r.resource_code):r.amount for r in rows}
     for code,raw in offered.items():
         amount=int(raw)
-        if code not in RESOURCE_NAMES or code=="peasants" or amount<=0 or balance.get(code,0)<amount: raise ValueError(f"دارایی پیشنهادی معتبر یا کافی نیست: {code}")
+        if code not in RESOURCE_NAMES or code=="peasants" or amount<=0 or balance.get((sender.id,code),0)<amount: raise ValueError(f"دارایی پیشنهادی معتبر یا کافی نیست: {code}")
     for code,raw in requested.items():
         amount=int(raw)
-        if code not in RESOURCE_NAMES or code=="peasants" or amount<=0: raise ValueError(f"دارایی درخواستی معتبر نیست: {code}")
+        if code not in RESOURCE_NAMES or code=="peasants" or amount<=0 or balance.get((recipient.id,code),0)<amount: raise ValueError(f"موجودی قلعه مقصد برای پرداخت {code} کافی نیست.")
     first=next(iter(offered.items())); second=next(iter(requested.items()))
     offer=TradeOffer(sender_lord_id=sender.id,recipient_lord_id=recipient.id,
         offered_resource=first[0],offered_amount=int(first[1]),requested_resource=second[0],requested_amount=int(second[1]),
