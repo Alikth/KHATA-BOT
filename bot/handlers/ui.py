@@ -6,7 +6,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from html import escape
 
 from bot.config import get_settings
@@ -224,13 +224,16 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
             econ = await session.get(CastleEconomyState, castle.id)
             if econ and econ.port_enabled:
                 buttons.append([InlineKeyboardButton(text="🚢 لشکرکشی دریایی", callback_data="ui:war:sea")])
-            rows = (await session.scalars(select(WarExpedition).where(WarExpedition.attacker_lord_id==lord.id).order_by(WarExpedition.id.desc()).limit(8))).all()
+            rows = (await session.scalars(select(WarExpedition).where(
+                or_(WarExpedition.attacker_lord_id==lord.id,WarExpedition.target_castle_id==castle.id)
+            ).order_by(WarExpedition.id.desc()).limit(12))).all()
+            submitted = set((await session.scalars(select(WarScenario.expedition_id).where(WarScenario.lord_id==lord.id))).all())
             for row in rows:
                 body += f"\n\n#{row.id} → قلعه {row.target_castle_id} | {row.status} | رسیدن: {row.arrival_at:%Y-%m-%d %H:%M UTC}" if row.arrival_at else f"\n#{row.id} | {row.status}"
-                if row.status == "arrived" and not row.command:
+                if row.attacker_lord_id==lord.id and row.status == "arrived" and not row.command:
                     buttons.append([InlineKeyboardButton(text=f"دستور لشکر #{row.id}", callback_data=f"ui:arrival:{row.id}")])
-                if row.command == "attack" and row.status == "resolving":
-                    buttons.append([InlineKeyboardButton(text=f"ارسال سناریو برای #{row.id}", callback_data=f"ui:scenario:{row.id}")])
+                if row.command == "attack" and row.status == "resolving" and row.id not in submitted:
+                    buttons.append([InlineKeyboardButton(text=f"📜 ارسال سناریو برای #{row.id}", callback_data=f"ui:scenario:{row.id}")])
             buttons.append([InlineKeyboardButton(text="🎲 ارسال رول", callback_data="ui:roll")])
             buttons.append([InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")])
             markup = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -244,7 +247,7 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
 
 
 @router.callback_query(F.data.startswith("ui:") & ~F.data.startswith("ui:warfinal:"))
-async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext):
+async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, bot):
     if not call.message or not call.from_user:
         await call.answer()
         return
@@ -326,6 +329,13 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext):
             kb=None
             if command=="attack":
                 kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📜 ارسال سناریو",callback_data=f"ui:scenario:{expedition_id}")]])
+                async with session_factory() as session:
+                    target_group=await session.scalar(select(GroupRegistration).where(GroupRegistration.castle_id==row.target_castle_id,GroupRegistration.enabled.is_(True)))
+                    target_castle=await session.get(Castle,row.target_castle_id)
+                if target_group:
+                    await bot.send_message(target_group.telegram_chat_id,
+                        f"⚔️ دستور حمله برای لشکر #{expedition_id} به قلعه {target_castle.name} ثبت شد. مدافع می‌تواند سناریوی خود را ارسال کند.",
+                        reply_markup=kb)
             await call.message.edit_text(f"دستور {command} برای لشکر #{expedition_id} ثبت شد.",reply_markup=kb); await call.answer(); return
         if action=="camp" and len(parts)==3:
             eid=int(parts[2])
