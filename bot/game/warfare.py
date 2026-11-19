@@ -151,8 +151,9 @@ async def issue_war_command(session: AsyncSession, expedition_id: int, lord: Lor
     return row
 
 async def submit_scenario(session: AsyncSession, expedition_id: int, lord: Lord, text: str):
-    row=await session.get(WarExpedition,expedition_id)
-    if not row or row.command!="attack" or not row.scenario_deadline_at: raise ValueError("برای این نبرد امکان ارسال سناریو وجود ندارد.")
+    row=await session.scalar(select(WarExpedition).where(WarExpedition.id==expedition_id).with_for_update())
+    if not row or row.command!="attack" or row.status!="resolving" or not row.scenario_deadline_at:
+        raise ValueError("برای این نبرد امکان ارسال سناریو وجود ندارد.")
     from bot.game.engine import advance_world_clock
     now=await advance_world_clock(session)
     if now>=row.scenario_deadline_at: raise ValueError("مهلت ۲۴ ساعته ارسال سناریو تمام شده است.")
@@ -216,28 +217,33 @@ async def review_battle(session: AsyncSession, expedition_id: int, outcome: str,
 
 async def answer_alliance(session: AsyncSession, alliance_id: int, lord: Lord, accept: bool):
     row=await session.scalar(select(MilitaryAlliance).where(MilitaryAlliance.id==alliance_id).with_for_update())
-    if not row or row.owner_b_lord_id!=lord.id or row.status!="pending": raise ValueError("درخواست اتحاد در دسترس نیست.")
-    row.status="accepted" if accept else "rejected";row.responded_at=datetime.now(timezone.utc)
-    if row.war_expedition_id:
-        expedition=await session.get(WarExpedition,row.war_expedition_id)
-        if expedition:
-            if accept:
-                for kind,items in (expedition.assets or expedition.units).items():
-                    for key,n in items.items():
-                        a=await _asset_row(session,expedition.target_castle_id,kind,key,expedition.attacker_lord_id)
-                        if a:a.count+=int(n)
-                        else:session.add(GarrisonAsset(castle_id=expedition.target_castle_id,owner_lord_id=expedition.attacker_lord_id,asset_kind=kind,asset_key=key,count=int(n)))
-                expedition.status="completed"
-            else:
-                for kind,items in (expedition.assets or expedition.units).items():
-                    for key,n in items.items():
-                        a=await _asset_row(session,expedition.origin_castle_id,kind,key,expedition.attacker_lord_id if expedition.asset_origin=="garrison" else None)
-                        if a:a.count+=int(n)
-                        elif expedition.asset_origin=="garrison": session.add(GarrisonAsset(castle_id=expedition.origin_castle_id,owner_lord_id=expedition.attacker_lord_id,asset_kind=kind,asset_key=key,count=int(n)))
-                        elif kind in ASSET_MODELS:
-                            model,field=ASSET_MODELS[kind];session.add(model(castle_id=expedition.origin_castle_id,**{field:key},count=int(n)))
-                expedition.status="completed"
+    if not row or row.owner_b_lord_id!=lord.id or row.status!="pending":
+        raise ValueError("درخواست اتحاد در دسترس نیست.")
+    expedition=await session.scalar(
+        select(WarExpedition).where(WarExpedition.id==row.war_expedition_id).with_for_update()
+    ) if row.war_expedition_id else None
+    if not expedition or expedition.status!="resolving":
+        raise ValueError("لشکر مرتبط با درخواست اتحاد پیدا نشد یا وضعیت آن معتبر نیست.")
+    row.status="accepted" if accept else "rejected"
+    row.responded_at=datetime.now(timezone.utc)
+    if accept:
+        for kind,items in (expedition.assets or expedition.units).items():
+            for key,n in items.items():
+                a=await _asset_row(session,expedition.target_castle_id,kind,key,expedition.attacker_lord_id)
+                if a:a.count+=int(n)
+                else:session.add(GarrisonAsset(castle_id=expedition.target_castle_id,owner_lord_id=expedition.attacker_lord_id,asset_kind=kind,asset_key=key,count=int(n)))
+    else:
+        for kind,items in (expedition.assets or expedition.units).items():
+            for key,n in items.items():
+                a=await _asset_row(session,expedition.origin_castle_id,kind,key,expedition.attacker_lord_id if expedition.asset_origin=="garrison" else None)
+                if a:a.count+=int(n)
+                elif expedition.asset_origin=="garrison": session.add(GarrisonAsset(castle_id=expedition.origin_castle_id,owner_lord_id=expedition.attacker_lord_id,asset_kind=kind,asset_key=key,count=int(n)))
+                elif kind in ASSET_MODELS:
+                    model,field=ASSET_MODELS[kind]
+                    session.add(model(castle_id=expedition.origin_castle_id,**{field:key},count=int(n)))
+    expedition.status="completed"
     return row
+
 
 async def answer_transfer(session: AsyncSession, request_id: int, lord: Lord, accept: bool):
     row=await session.scalar(select(TroopTransferRequest).where(TroopTransferRequest.id==request_id).with_for_update())
