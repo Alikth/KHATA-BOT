@@ -494,6 +494,86 @@ async def buildings_cmd(message: Message, session_factory):
     lines.append("\nارتقا: /upgrade production farm یا /upgrade camp swordsman")
     await message.answer("\n".join(lines))
 
+@router.callback_query(F.data.startswith("upgrade:"))
+async def upgrade_prompt(call: CallbackQuery, session_factory):
+    if not call.from_user or not call.message:
+        await call.answer()
+        return
+    from bot.integrations.site_api import configured
+    if not configured():
+        await call.answer("اتصال امن به سایت تنظیم نشده است.", show_alert=True)
+        return
+    _, category, key = call.data.split(":", 2)
+    async with session_factory() as session:
+        lord = await get_lord(session, call.from_user.id)
+        if not lord:
+            await call.answer("برای این حساب لردی ثبت نشده است.", show_alert=True)
+            return
+        castle = await session.get(Castle, lord.castle_id)
+        if category == "production":
+            definition = GENERAL_PRODUCTIONS.get(key) or (SPECIAL_PRODUCTIONS.get(castle.region) if SPECIAL_PRODUCTIONS.get(castle.region, {}).get("key") == key else None)
+            model, field = ProductionLevel, "production_key"
+        elif category == "camp":
+            definition = GENERAL_CAMPS.get(key)
+            model, field = CampLevel, "camp_key"
+        elif category == "special_camp":
+            definition = next((x for x in SPECIAL_CAMPS.get(castle.region, []) if x["key"] == key), None)
+            model, field = SpecialCampLevel, "camp_key"
+        else:
+            definition = None
+            model, field = ProductionLevel, "production_key"
+        if not definition:
+            await call.answer("این ارتقا برای قلعه تعریف نشده است.", show_alert=True)
+            return
+        row = await session.scalar(select(model).where(model.castle_id == lord.castle_id, getattr(model, field) == key))
+        level = int(row.level if row else 0)
+        if level >= int(definition.get("max", 0)):
+            await call.answer("این مورد به حداکثر سطح رسیده است.", show_alert=True)
+            return
+    cost = "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ تأیید ارتقا", callback_data=f"upgradeconfirm:{category}:{key}")],
+        [InlineKeyboardButton(text="❌ انصراف", callback_data="upgradecancel")],
+    ])
+    await _safe_edit_text(call.message, f"ارتقای {definition['label']}\nسطح فعلی: {level}\nسطح بعدی: {level+1}\nهزینه: {cost}\n\nآیا تأیید می‌کنی؟", reply_markup=keyboard)
+    await call.answer()
+
+
+@router.callback_query(F.data == "upgradecancel")
+async def upgrade_cancel(call: CallbackQuery):
+    if call.message:
+        await _safe_edit_text(call.message, "عملیات ارتقا لغو شد.", reply_markup=section_back_menu())
+    await call.answer("لغو شد")
+
+
+@router.callback_query(F.data.startswith("upgradeconfirm:"))
+async def upgrade_confirm(call: CallbackQuery, session_factory):
+    if not call.from_user or not call.message:
+        await call.answer()
+        return
+    from bot.integrations.site_api import configured, upgrade_on_site, sync_snapshot_to_postgres
+    if not configured():
+        await call.answer("اتصال امن به سایت تنظیم نشده است.", show_alert=True)
+        return
+    _, category, key = call.data.split(":", 2)
+    try:
+        async with session_factory() as session, session.begin():
+            lord = await get_lord(session, call.from_user.id)
+            if not lord:
+                raise SiteApiError("برای این حساب لردی ثبت نشده است.")
+            castle = await session.get(Castle, lord.castle_id)
+            remote = await upgrade_on_site(call.from_user.id, castle.name, category, key)
+            await sync_snapshot_to_postgres(session, lord, remote["snapshot"])
+            await audit(session, call.from_user.id, "building_upgraded", str(lord.castle_id), f"{category}:{key}:{remote['result'].get('newLevel')}")
+            level = int(remote["result"].get("newLevel", 0))
+            definition = GENERAL_PRODUCTIONS.get(key) or (SPECIAL_PRODUCTIONS.get(castle.region) if SPECIAL_PRODUCTIONS.get(castle.region, {}).get("key") == key else None) or GENERAL_CAMPS.get(key) or next((x for x in SPECIAL_CAMPS.get(castle.region, []) if x["key"] == key), {})
+        cost = "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
+        await _safe_edit_text(call.message, f"✅ {definition['label']} به سطح {level} ارتقا یافت.\nهزینه: {cost}", reply_markup=section_back_menu())
+        await call.answer("ارتقا انجام شد")
+    except (ValueError, SiteApiError) as exc:
+        await call.answer(str(exc), show_alert=True)
+
+
 @router.message(Command("upgrade"))
 async def upgrade_cmd(message: Message, session_factory):
     from bot.integrations.site_api import configured
