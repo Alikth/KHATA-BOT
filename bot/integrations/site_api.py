@@ -56,7 +56,16 @@ async def assign_lord_on_site(telegram_user_id: int, castle_name: str, assigned_
         "castle": castle_name,
         "assignedBy": str(assigned_by),
     })
-    return await fetch_site_snapshot(telegram_user_id, castle_name)
+    try:
+        return await fetch_site_snapshot(telegram_user_id, castle_name)
+    except Exception:
+        # Do not leave a D1 assignment behind if the initial snapshot cannot be read.
+        try:
+            await revoke_lord_on_site(telegram_user_id)
+        except Exception:
+            import logging
+            logging.exception("Could not roll back incomplete website lord assignment")
+        raise
 
 
 async def revoke_lord_on_site(telegram_user_id: int) -> None:
