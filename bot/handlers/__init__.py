@@ -257,11 +257,13 @@ async def set_lord_reply(message: Message, session_factory):
         if not group:
             await message.answer("این گروه هنوز به قلعه متصل نشده است."); return
         target = message.reply_to_message.from_user
+        site_assignment_created = False
         try:
             lord = await create_lord(session, target.id, target.full_name, target.username, cfg.bot_owner_id, group.castle_id)
             from bot.integrations.site_api import configured, assign_lord_on_site, sync_snapshot_to_postgres, SiteApiError
             if configured():
-                snapshot = await assign_lord_on_site(target.id, group.castle_id and (await session.get(Castle, group.castle_id)).name, cfg.bot_owner_id)
+                snapshot = await assign_lord_on_site(target.id, (await session.get(Castle, group.castle_id)).name, cfg.bot_owner_id)
+                site_assignment_created = True
                 await sync_snapshot_to_postgres(session, lord, snapshot)
             await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id), f"castle_id={group.castle_id}; chat_id={message.chat.id}")
             castle = await session.get(Castle, group.castle_id)
@@ -269,7 +271,7 @@ async def set_lord_reply(message: Message, session_factory):
             await session.rollback()
             try:
                 from bot.integrations.site_api import revoke_lord_on_site
-                if "target" in locals():
+                if site_assignment_created:
                     await revoke_lord_on_site(target.id)
             except SiteApiError:
                 import logging
