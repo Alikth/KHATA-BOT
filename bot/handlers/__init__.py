@@ -84,6 +84,12 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         return
 
     cfg = get_settings()
+    if action == "back":
+        await call.message.edit_text(
+            "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.",
+            reply_markup=main_menu(is_admin=bool(cfg.bot_owner_id and call.from_user.id == cfg.bot_owner_id))
+        )
+        return
     if action == "admin":
         if not cfg.bot_owner_id or call.from_user.id != cfg.bot_owner_id:
             await call.answer("دسترسی مجاز نیست.", show_alert=True)
@@ -308,6 +314,43 @@ async def trade_callback(call: CallbackQuery, bot, session_factory):
         await call.answer("انجام شد")
     except ValueError as exc:
         await call.answer(str(exc), show_alert=True)
+
+@router.callback_query(F.data.startswith("admin:"))
+async def admin_menu_callback(call: CallbackQuery, session_factory):
+    cfg = get_settings()
+    if not call.from_user or not cfg.bot_owner_id or call.from_user.id != cfg.bot_owner_id:
+        await call.answer("دسترسی سوپرادمین مجاز نیست.", show_alert=True)
+        return
+    if not call.message or _admin_sessions.get(call.from_user.id, 0) < monotonic():
+        await call.answer("نشست مدیریت منقضی شده است؛ دوباره وارد پنل شو.", show_alert=True)
+        return
+    action = call.data.split(":", 1)[1]
+    if action not in ("pause", "resume", "status"):
+        await call.answer("عملیات نامعتبر است.", show_alert=True)
+        return
+    if action == "status":
+        async with session_factory() as session:
+            paused = await is_world_paused(session)
+        await call.message.edit_text(
+            f"📊 وضعیت جهان: {'متوقف' if paused else 'فعال'}",
+            reply_markup=admin_menu()
+        )
+    else:
+        paused = action == "pause"
+        async with session_factory() as session, session.begin():
+            await set_world_paused(session, paused)
+            await audit(session, call.from_user.id, "world_paused" if paused else "world_resumed")
+        await publish_admin_audit(
+            call.bot, call.from_user.id,
+            "world_paused" if paused else "world_resumed",
+            "world", "تغییر وضعیت ساعت جهان از منوی شیشه‌ای"
+        )
+        await call.message.edit_text(
+            "⏸ ساعت جهان متوقف شد." if paused else "▶️ ساعت جهان ادامه یافت.",
+            reply_markup=admin_menu()
+        )
+    await call.answer("انجام شد")
+
 
 @router.message(Command("admin"))
 async def admin_panel(message: Message, session_factory):
