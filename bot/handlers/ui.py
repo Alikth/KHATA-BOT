@@ -280,6 +280,39 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
             if not rows: raise ValueError("قلعه دیگری با لرد فعال برای تجارت وجود ندارد.")
             kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🏰 {c.name}",callback_data=f"ui:trade:target:{l.id}")] for c,l in rows]+[[InlineKeyboardButton(text="لغو",callback_data="menu:trade")]])
             await call.message.edit_text("قلعه مقصد تجارت را انتخاب کن:",reply_markup=kb); await call.answer(); return
+        if action=="tradeconfirm" and len(parts)==3:
+            if parts[2]=="cancel":
+                await state.clear()
+                await call.message.edit_text("ثبت پیشنهاد تجارت لغو شد.",reply_markup=_back())
+                await call.answer();return
+            if parts[2]!="submit": raise ValueError("عملیات تأیید تجارت نامعتبر است.")
+            data=await state.get_data()
+            if not data.get("trade_target") or not data.get("trade_offered") or not data.get("trade_requested"):
+                await state.clear()
+                raise ValueError("فرایند تجارت منقضی شده است؛ دوباره شروع کن.")
+            async with session_factory() as session,session.begin():
+                lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
+                offer=await create_trade_bundle(session,lord,int(data["trade_target"]),data["trade_offered"],data["trade_requested"])
+                recipient=await get_lord(session,int(data["trade_target"]))
+                target_group=await session.scalar(select(GroupRegistration).where(
+                    GroupRegistration.castle_id==recipient.castle_id,
+                    GroupRegistration.enabled.is_(True)))
+                if not target_group:
+                    raise ValueError("گروه قلعه مقصد ثبت یا فعال نیست؛ پیشنهاد تجارت ارسال نشد.")
+                target_chat_id=target_group.telegram_chat_id
+                recipient_name=recipient.display_name
+                await audit(session,call.from_user.id,"trade_bundle_created",str(offer.id))
+            await state.clear()
+            decision=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ پذیرش",callback_data=f"trade:accept:{offer.id}"),
+                InlineKeyboardButton(text="❌ رد",callback_data=f"trade:reject:{offer.id}")]])
+            await bot.send_message(target_chat_id,
+                f"🤝 <b>پیشنهاد تجارت جدید #{offer.id}</b>\\nاز لرد: {escape(lord.display_name)}\\nارسال: {data['trade_offered']}\\nدریافت: {data['trade_requested']}",
+                reply_markup=decision)
+            await call.message.edit_text(f"✅ پیشنهاد تجارت #{offer.id} برای {escape(recipient_name)} ارسال شد.",reply_markup=_back())
+            if get_settings().trade_log_chat_id:
+                await bot.send_message(get_settings().trade_log_chat_id,f"پیشنهاد #{offer.id}: {data['trade_offered']} در برابر {data['trade_requested']}")
+            await call.answer("پیشنهاد ارسال شد");return
         if action=="tradecancel" and len(parts)==3:
             async with session_factory() as session,session.begin():
                 lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
