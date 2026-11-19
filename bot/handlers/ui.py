@@ -22,7 +22,7 @@ from bot.game.engine import (
 )
 from bot.game.warfare import launch_expedition, issue_war_command, set_arrival_choice, submit_scenario
 from bot.game.controls import get_controls, update_controls
-from bot.keyboards import main_menu, section_back_menu, admin_menu, trade_decision
+from bot.keyboards import main_menu, section_back_menu, admin_menu
 
 router = Router()
 
@@ -207,14 +207,16 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
             sent_offers = (await session.scalars(select(TradeOffer).where(TradeOffer.sender_lord_id==lord.id,TradeOffer.status=="pending").order_by(TradeOffer.id.desc()).limit(8))).all()
             buttons = []
             for offer in offers:
-                buttons.append([InlineKeyboardButton(text=f"پیشنهاد #{offer.id} — پذیرش/رد", callback_data=f"trade:accept:{offer.id}")])
+                buttons.append([
+                    InlineKeyboardButton(text=f"✅ پذیرش #{offer.id}",callback_data=f"trade:accept:{offer.id}"),
+                    InlineKeyboardButton(text="❌ رد",callback_data=f"trade:reject:{offer.id}"),
+                ])
             for offer in sent_offers:
                 buttons.append([InlineKeyboardButton(text=f"❌ لغو پیشنهاد ارسالی #{offer.id}",callback_data=f"ui:tradecancel:{offer.id}")])
             buttons.append([InlineKeyboardButton(text="➕ ایجاد پیشنهاد تجارت", callback_data="ui:trade:new")])
             buttons.append([InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")])
             markup = InlineKeyboardMarkup(inline_keyboard=buttons)
-            for offer in offers:
-                await call.message.answer(f"پیشنهاد #{offer.id}\nارسال: {offer.offered_assets or {offer.offered_resource:offer.offered_amount}}\nدریافت: {offer.requested_assets or {offer.requested_resource:offer.requested_amount}}", reply_markup=trade_decision(offer.id))
+
         elif action == "war":
             body += "🚩 <b>لشکرکشی زمینی: THE WAR OF WESTEROS</b>\nزمان رسیدن برآوردی است و با توقف جهان ثابت می‌ماند."
             buttons = [[InlineKeyboardButton(text="⚔️ لشکرکشی زمینی", callback_data="ui:war:new")],
