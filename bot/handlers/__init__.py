@@ -96,6 +96,10 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         return
 
     cfg = get_settings()
+    from bot.integrations.site_api import configured
+    if action in ("assets", "buildings", "camps", "army", "trade", "war") and not configured():
+        await _safe_edit_text(call.message, "برای نمایش اطلاعات قابل‌اعتماد، ابتدا اتصال امن سایت را در تنظیمات بات فعال کن.", reply_markup=section_back_menu())
+        return
     if action == "back":
         await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
         return
