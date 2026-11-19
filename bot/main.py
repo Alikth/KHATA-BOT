@@ -52,7 +52,7 @@ async def main():
                         origin=await session.get(Castle,row.origin_castle_id)
                         target=await session.get(Castle,row.target_castle_id)
                         groups=(await session.scalars(select(GroupRegistration).where(GroupRegistration.castle_id.in_([row.origin_castle_id,row.target_castle_id]),GroupRegistration.enabled.is_(True)))).all()
-                        text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\\n{origin.name} → {target.name}\\nمهاجم باید دستور بعدی را ثبت کند."
+                        text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nمهاجم باید دستور بعدی را ثبت کند."
                         notices.extend((g.telegram_chat_id,text) for g in groups)
                 for chat_id,notice in notices:
                     try: await bot.send_message(chat_id,notice)
