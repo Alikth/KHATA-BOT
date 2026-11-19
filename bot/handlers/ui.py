@@ -326,12 +326,13 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
                 lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
                 row=await issue_war_command(session,expedition_id,lord,command)
                 await audit(session,call.from_user.id,"war_command_issued",str(row.id),command)
+                target_castle_id=row.target_castle_id
             kb=None
             if command=="attack":
                 kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📜 ارسال سناریو",callback_data=f"ui:scenario:{expedition_id}")]])
                 async with session_factory() as session:
-                    target_group=await session.scalar(select(GroupRegistration).where(GroupRegistration.castle_id==row.target_castle_id,GroupRegistration.enabled.is_(True)))
-                    target_castle=await session.get(Castle,row.target_castle_id)
+                    target_group=await session.scalar(select(GroupRegistration).where(GroupRegistration.castle_id==target_castle_id,GroupRegistration.enabled.is_(True)))
+                    target_castle=await session.get(Castle,target_castle_id)
                 if target_group:
                     await bot.send_message(target_group.telegram_chat_id,
                         f"⚔️ دستور حمله برای لشکر #{expedition_id} به قلعه {target_castle.name} ثبت شد. مدافع می‌تواند سناریوی خود را ارسال کند.",
