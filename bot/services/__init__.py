@@ -44,6 +44,9 @@ async def create_castle_group(session: AsyncSession, chat_id: int, title: str, c
     return castle, group
 
 async def create_lord(session: AsyncSession, telegram_id: int, display_name: str, username: str | None, creator_id: int, castle_id: int):
+    from bot.game.controls import get_controls
+    if not (await get_controls(session))["castle_selection_open"]:
+        raise ValueError("انتخاب یا تخصیص قلعه در حال حاضر توسط مدیریت قفل شده است.")
     if await get_lord(session, telegram_id):
         raise ValueError("این حساب تلگرام قبلاً لرد دارد.")
     existing = await session.scalar(select(Lord).where(Lord.castle_id == castle_id, Lord.status == "active"))
@@ -65,6 +68,9 @@ async def get_balances(session: AsyncSession, lord_id: int):
 
 async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, offered_resource: str, offered_amount: int, requested_resource: str, requested_amount: int):
     from bot.game.engine import ensure_castle_not_under_siege
+    from bot.game.controls import get_controls
+    if not (await get_controls(session))["trades_open"]:
+        raise ValueError("ثبت پیشنهاد تجارت توسط مدیریت قفل شده است.")
     if offered_resource not in RESOURCE_NAMES or requested_resource not in RESOURCE_NAMES:
         raise ValueError("منبع نامعتبر است.")
     if offered_amount <= 0 or requested_amount <= 0:
@@ -84,6 +90,9 @@ async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, o
 
 async def create_trade_bundle(session: AsyncSession, sender: Lord, recipient_id: int, offered: dict, requested: dict):
     from bot.game.engine import ensure_castle_not_under_siege
+    from bot.game.controls import get_controls
+    if not (await get_controls(session))["trades_open"]:
+        raise ValueError("ثبت پیشنهاد تجارت توسط مدیریت قفل شده است.")
     recipient=await get_lord(session,recipient_id)
     if not recipient or recipient.id==sender.id: raise ValueError("بازیکن مقصد معتبر نیست.")
     await ensure_castle_not_under_siege(session, sender.castle_id)
