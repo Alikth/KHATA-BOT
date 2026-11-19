@@ -443,6 +443,10 @@ async def upgrade_prompt(call: CallbackQuery, session_factory):
         if not lord:
             await call.answer("برای این حساب لردی ثبت نشده است.", show_alert=True)
             return
+        group = await get_group(session, call.message.chat.id)
+        if not group or group.castle_id != lord.castle_id:
+            await call.answer("این عملیات فقط در گروه قلعه اختصاص‌یافته به لرد مجاز است.", show_alert=True)
+            return
         castle = await session.get(Castle, lord.castle_id)
         if category == "production":
             definition = GENERAL_PRODUCTIONS.get(key) or (SPECIAL_PRODUCTIONS.get(castle.region) if SPECIAL_PRODUCTIONS.get(castle.region, {}).get("key") == key else None)
@@ -495,6 +499,9 @@ async def upgrade_confirm(call: CallbackQuery, session_factory):
             lord = await get_lord(session, call.from_user.id)
             if not lord:
                 raise ValueError("برای این حساب لردی ثبت نشده است.")
+            group = await get_group(session, call.message.chat.id)
+            if not group or group.castle_id != lord.castle_id:
+                raise ValueError("این عملیات فقط در گروه قلعه اختصاص‌یافته به لرد مجاز است.")
             castle = await session.get(Castle, lord.castle_id)
             level, definition = await engine_upgrade(session, lord, category, key)
             await audit(session, call.from_user.id, "building_upgraded", str(lord.castle_id), f"{category}:{key}:{level}")
