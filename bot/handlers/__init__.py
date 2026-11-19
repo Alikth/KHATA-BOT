@@ -274,7 +274,14 @@ async def trade_callback(call: CallbackQuery, bot, session_factory):
             await audit(session, call.from_user.id, f"trade_{offer.status}", str(offer.id))
             sender = await session.get(Lord, offer.sender_lord_id)
             recipient = await session.get(Lord, offer.recipient_lord_id)
+            sender_group = await session.scalar(select(GroupRegistration).where(
+                GroupRegistration.castle_id == sender.castle_id,
+                GroupRegistration.enabled.is_(True),
+            ))
+            sender_chat_id = sender_group.telegram_chat_id if sender_group else None
         await call.message.edit_text(f"پیشنهاد #{offer.id}: {offer.status}")
+        if sender_chat_id and sender_chat_id != call.message.chat.id:
+            await bot.send_message(sender_chat_id, f"🤝 وضعیت پیشنهاد تجارت #{offer.id}: {offer.status}\\nمقصد: {recipient.display_name}")
         if offer.status == "completed" and get_settings().trade_log_chat_id:
             offered=offer.offered_assets or {offer.offered_resource:offer.offered_amount}
             requested=offer.requested_assets or {offer.requested_resource:offer.requested_amount}
