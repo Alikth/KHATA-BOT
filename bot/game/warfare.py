@@ -112,7 +112,23 @@ async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lo
     elif choice=="alliance":
         defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
         if not defender: raise ValueError("برای اتحاد، قلعه مقصد باید لرد فعال داشته باشد.")
-        session.add(MilitaryAlliance(castle_a_id=row.origin_castle_id,castle_b_id=row.target_castle_id,owner_a_lord_id=lord.id,owner_b_lord_id=defender.id,status="pending",war_expedition_id=row.id))
+        if row.origin_castle_id < row.target_castle_id:
+            castle_a, castle_b = row.origin_castle_id, row.target_castle_id
+            owner_a, owner_b = lord.id, defender.id
+        else:
+            castle_a, castle_b = row.target_castle_id, row.origin_castle_id
+            owner_a, owner_b = defender.id, lord.id
+        existing = await session.scalar(
+            select(MilitaryAlliance).where(
+                MilitaryAlliance.castle_a_id == castle_a,
+                MilitaryAlliance.castle_b_id == castle_b,
+                MilitaryAlliance.status.in_(("pending", "accepted")),
+            ).with_for_update()
+        )
+        if existing:
+            raise ValueError("برای این دو قلعه درخواست اتحاد فعال یا پذیرفته‌شده وجود دارد.")
+        session.add(MilitaryAlliance(castle_a_id=castle_a,castle_b_id=castle_b,
+            owner_a_lord_id=owner_a,owner_b_lord_id=owner_b,status="pending",war_expedition_id=row.id))
         row.status="resolving"
     else: row.status="arrived"
     return row
