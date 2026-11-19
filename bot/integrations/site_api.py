@@ -79,8 +79,8 @@ async def sync_snapshot_to_postgres(session, lord: Lord, snapshot: dict) -> None
     if snapshot.get("castle") is None:
         raise SiteApiError("نام قلعه در پاسخ سایت وجود ندارد.")
     castle = await session.get(Castle, lord.castle_id)
-    if not castle or castle.name != snapshot["castle"]:
-        raise SiteApiError("تطبیق قلعه لرد با پاسخ سایت نامعتبر است.")
+    if not castle or castle.name != snapshot["castle"] or castle.region != snapshot.get("region"):
+        raise SiteApiError("تطبیق نام یا منطقه قلعه لرد با پاسخ سایت نامعتبر است.")
 
     resources = snapshot.get("resources") or {}
     rows = (await session.scalars(
@@ -101,6 +101,9 @@ async def sync_snapshot_to_postgres(session, lord: Lord, snapshot: dict) -> None
             select(model).where(model.castle_id == lord.castle_id).with_for_update()
         )).all()
         index = {getattr(row, field): row for row in current}
+        for key, row in index.items():
+            if key not in values:
+                row.level = 0
         for key, item in values.items():
             level = int((item or {}).get("level", 0))
             row = index.get(key)
@@ -118,6 +121,9 @@ async def sync_snapshot_to_postgres(session, lord: Lord, snapshot: dict) -> None
             select(model).where(model.castle_id == lord.castle_id).with_for_update()
         )).all()
         index = {getattr(row, field): row for row in current}
+        for key, row in index.items():
+            if key not in values:
+                row.count = 0
         for key, raw in values.items():
             count = int(raw or 0)
             if count < 0:
