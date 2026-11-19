@@ -385,7 +385,15 @@ async def war_assets_input(message:Message,state:FSMContext):
             if not section.strip(): continue
             kind,sep,items=section.partition(":")
             if not sep or kind not in assets: raise ValueError("قالب: army:swordsman=10;equipment:ladder=1")
-            assets[kind]=_parse_quantities(items)
+            parsed={}
+            for item in items.split(","):
+                key,eq,value=item.strip().partition("=")
+                if not eq: raise ValueError("قالب هر دارایی باید key=count باشد.")
+                try: count=int(value.strip())
+                except ValueError: raise ValueError("تعداد دارایی باید عدد صحیح باشد.")
+                if count<=0 or count>1000000: raise ValueError("تعداد باید بین ۱ تا ۱۰۰۰۰۰۰ باشد.")
+                parsed[key.strip()]=count
+            assets[kind]=parsed
         if not any(assets.values()): raise ValueError("حداقل یک نیرو یا ادوات وارد کن.")
         data=await state.get_data()
         available=data["war_available"]
