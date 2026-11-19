@@ -80,6 +80,8 @@ async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, o
         raise ValueError("بازیکن مقصد معتبر نیست.")
     await ensure_castle_not_under_siege(session, sender.castle_id)
     await ensure_castle_not_under_siege(session, recipient.castle_id)
+    if not (await get_controls(session))["trades_open"]:
+        raise ValueError("ثبت پیشنهاد تجارت توسط مدیریت قفل شده است.")
     balances = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_([sender.id, recipient.id])).order_by(ResourceBalance.lord_id, ResourceBalance.resource_code).with_for_update())).all()
     lookup = {(r.lord_id, r.resource_code): r.amount for r in balances}
     if lookup.get((sender.id, offered_resource), 0) < offered_amount:
@@ -94,12 +96,12 @@ async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, o
 async def create_trade_bundle(session: AsyncSession, sender: Lord, recipient_id: int, offered: dict, requested: dict):
     from bot.game.engine import ensure_castle_not_under_siege
     from bot.game.controls import get_controls
-    if not (await get_controls(session))["trades_open"]:
-        raise ValueError("ثبت پیشنهاد تجارت توسط مدیریت قفل شده است.")
     recipient=await get_lord(session,recipient_id)
     if not recipient or recipient.id==sender.id: raise ValueError("بازیکن مقصد معتبر نیست.")
     await ensure_castle_not_under_siege(session, sender.castle_id)
     await ensure_castle_not_under_siege(session, recipient.castle_id)
+    if not (await get_controls(session))["trades_open"]:
+        raise ValueError("ثبت پیشنهاد تجارت توسط مدیریت قفل شده است.")
     if not offered or not requested: raise ValueError("هر دو طرف معامله باید دارایی داشته باشند.")
     if len(offered)>20 or len(requested)>20: raise ValueError("حداکثر ۲۰ نوع دارایی در هر سمت مجاز است.")
     ids=sorted([sender.id,recipient.id])
