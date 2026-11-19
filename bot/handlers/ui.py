@@ -547,9 +547,23 @@ async def admin_ui(call:CallbackQuery,session_factory,state:FSMContext,bot):
             await call.message.edit_text(f"معامله #{offer_id} برگردانده شد.",reply_markup=admin_menu());await call.answer();return
         if action[0]=="trades":
             async with session_factory() as session:
-                rows=(await session.scalars(select(TradeOffer).where(TradeOffer.status=="completed").order_by(TradeOffer.id.desc()).limit(20))).all()
-            kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"↩️ بازگردانی معامله #{x.id}",callback_data=f"adminui:rollback:{x.id}")] for x in rows]+[[InlineKeyboardButton(text="↩️ پنل",callback_data="adminui:home")]])
-            await call.message.edit_text("گزارش معاملات تکمیل‌شده:",reply_markup=kb);await call.answer();return
+                castles=(await session.scalars(select(Castle).order_by(Castle.region,Castle.name))).all()
+            kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🏰 {c.name}",callback_data=f"adminui:tradecastle:{c.id}")] for c in castles]+[[InlineKeyboardButton(text="↩️ پنل",callback_data="adminui:home")]])
+            await call.message.edit_text("گزارش تجارت را برای کدام قلعه می‌خواهی؟",reply_markup=kb);await call.answer();return
+        if action[0]=="tradecastle" and len(action)==2:
+            castle_id=int(action[1])
+            async with session_factory() as session:
+                lord_ids=(await session.scalars(select(Lord.id).where(Lord.castle_id==castle_id))).all()
+                rows=(await session.scalars(select(TradeOffer).where(
+                    TradeOffer.status=="completed",
+                    (TradeOffer.sender_lord_id.in_(lord_ids)) | (TradeOffer.recipient_lord_id.in_(lord_ids))
+                ).order_by(TradeOffer.id.desc()).limit(20))).all()
+                castle=await session.get(Castle,castle_id)
+            lines=[f"گزارش معاملات قلعه {castle.name if castle else castle_id}:"]
+            for item in rows:
+                lines.append(f"#{item.id} | {item.sender_lord_id} → {item.recipient_lord_id} | {item.offered_assets or {item.offered_resource:item.offered_amount}} ↔ {item.requested_assets or {item.requested_resource:item.requested_amount}}")
+            kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"↩️ بازگردانی معامله #{item.id}",callback_data=f"adminui:rollback:{item.id}")] for item in rows]+[[InlineKeyboardButton(text="⬅️ قلعه‌ها",callback_data="adminui:trades")]])
+            await call.message.edit_text("\\n".join(lines) if rows else lines[0]+"\\nمعامله تکمیل‌شده‌ای وجود ندارد.",reply_markup=kb);await call.answer();return
         if action[0]=="home":
             await call.message.edit_text(await _admin_panel_text(session_factory),reply_markup=admin_menu());await call.answer();return
         await call.answer("عملیات نامعتبر است.",show_alert=True)
