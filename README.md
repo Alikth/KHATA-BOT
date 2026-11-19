@@ -86,3 +86,12 @@
 برای JSON داوری جنگ، نمونه: `{"attacker":{"army":{"swordsman":10},"equipment":{"ladder":1}},"defender":{"army":{"spearman":5}}}`.
 
 قبل از اجرای این نسخه روی دیتابیس قبلی، از دیتابیس `khata_bot` بکاپ بگیر و migration `bot/database/migrations/0002_warfare_trade_parity.sql` را در pgAdmin اجرا کن.
+
+
+## ارتباط امن با سایت (مرحله همگام‌سازی)
+
+برای همگام‌سازی دارایی قلعه، Worker سایت باید secret با نام `BOT_API_SECRET` داشته باشد و همان مقدار در فایل محلی و خصوصی `.env` بات با نام `SITE_API_SECRET` تنظیم شود. همچنین `SITE_API_URL` باید آدرس Worker سایت باشد. نمونه تنظیمات در `.env.example` قرار دارد؛ مقدار secret را هرگز commit نکن.
+
+پس از تنظیم secret، migrationهای `migrations/0006_bot_integration.sql` در سایت و `bot/database/migrations/0003_integration_sync.sql` در PostgreSQL را پس از backup جداگانه اجرا کن. دستور `set lord` همچنان توسط سوپریوزر و با Reply به پیام بازیکن انجام می‌شود؛ هیچ حساب کاربری جدیدی در بات ایجاد نمی‌شود.
+
+جزئیات قابلیت‌های پیاده‌سازی‌شده و موارد باقی‌مانده در `docs/integration/two-way-game-parity.md` آمده است. تا زمان تکمیل تمام مسیرهای تجارت و جنگ، این شاخه را نسخه نهایی و آماده تولید در نظر نگیر.
