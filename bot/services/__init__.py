@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import Lord, ResourceBalance, TradeOffer, AdminAuditLog, GameState, Castle, GroupRegistration
-from bot.game.engine import initialize_castle, STARTING_RESOURCES
+from bot.game.engine import initialize_castle, STARTING_RESOURCES, CATALOG
 
 # Resource names follow the source website's game-rules.js vocabulary.
 RESOURCE_NAMES = {
@@ -17,7 +17,19 @@ async def get_lord(session: AsyncSession, telegram_id: int):
 async def get_group(session: AsyncSession, chat_id: int):
     return await session.scalar(select(GroupRegistration).where(GroupRegistration.telegram_chat_id == chat_id, GroupRegistration.enabled.is_(True)))
 
+def validate_castle_selection(castle_name: str, region: str, house: str) -> None:
+    """Require an exact castle/region/house tuple from the canonical game catalog."""
+    for region_entry in CATALOG.get("houses", []):
+        if region_entry.get("region") != region:
+            continue
+        for castle_entry in region_entry.get("castles", []):
+            if castle_entry.get("castle") == castle_name and castle_entry.get("house") == house:
+                return
+    raise ValueError("نام قلعه، منطقه یا خاندان با کاتالوگ رسمی بازی مطابقت ندارد.")
+
+
 async def create_castle_group(session: AsyncSession, chat_id: int, title: str, castle_name: str, region: str, house: str, owner_id: int):
+    validate_castle_selection(castle_name, region, house)
     if await get_group(session, chat_id):
         raise ValueError("این گروه قبلاً به یک قلعه متصل شده است.")
     castle = await session.scalar(select(Castle).where(Castle.name == castle_name))
