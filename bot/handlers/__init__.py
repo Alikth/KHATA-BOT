@@ -92,7 +92,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         return
     if action == "admin":
         if not cfg.bot_owner_id or call.from_user.id != cfg.bot_owner_id:
-            await call.answer("دسترسی مجاز نیست.", show_alert=True)
+            await call.message.answer("دسترسی مجاز نیست.")
             return
         if _admin_sessions.get(call.from_user.id, 0) < monotonic():
             await call.message.answer("برای ورود امن، در گفت‌وگوی خصوصی ربات دستور /admin کد را ارسال کن.")
@@ -118,7 +118,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
 
         if action == "assets":
             balances = await get_balances(session, lord.id)
-            lines = [f"👑 پروفایل {lord.display_name}", f"🏰 {castle.name if castle else 'قلعه نامشخص'}", "", "📦 دارایی‌ها"]
+            lines = [f"👑 پروفایل {escape(lord.display_name)}", f"🏰 {escape(castle.name) if castle else 'قلعه نامشخص'}", "", "📦 دارایی‌ها"]
             lines.extend(f"{RESOURCE_NAMES.get(key, key)}: {value}" for key, value in balances.items())
             body = "\n".join(lines)
         elif action in ("buildings", "camps"):
@@ -127,7 +127,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
             productions = (await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id == lord.castle_id).order_by(ProductionLevel.production_key))).all()
             camps = (await session.scalars(select(CampLevel).where(CampLevel.castle_id == lord.castle_id).order_by(CampLevel.camp_key))).all()
             special = (await session.scalars(select(SpecialCampLevel).where(SpecialCampLevel.castle_id == lord.castle_id).order_by(SpecialCampLevel.camp_key))).all()
-            lines = [f"🏰 {castle.name if castle else 'قلعه'}"]
+            lines = [f"🏰 {escape(castle.name) if castle else 'قلعه'}"]
             if action == "buildings":
                 lines.append("🏗 ساختمان‌های تولید")
                 for row in productions:
