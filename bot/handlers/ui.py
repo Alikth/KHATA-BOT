@@ -77,6 +77,12 @@ def _cost(definition):
     return "، ".join(f"{RESOURCE_LABELS.get(k,k)} {int(v):,}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
 
 
+def _format_available(available):
+    army=", ".join(f"{ARMY_LABELS.get(k,k)} [{k}]={v}" for k,v in available.get("army",{}).items()) or "ندارد"
+    equipment=", ".join(f"{EQUIPMENT_LABELS.get(k,k)} [{k}]={v}" for k,v in available.get("equipment",{}).items()) or "ندارد"
+    fleet=", ".join(f"{FLEET_LABELS.get(k,k)} [{k}]={v}" for k,v in available.get("fleet",{}).items()) or "ندارد"
+    return f"ارتش: {army}\nادوات: {equipment}\nناوگان: {fleet}"
+
 def _parse_quantities(raw):
     result = {}
     for item in raw.replace("؛", ",").replace("،", ",").split(","):
@@ -324,7 +330,7 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
                 available={"army":{r.unit_key:r.count for r in army},"equipment":{r.item_key:r.count for r in gear},"fleet":{r.ship_key:r.count for r in fleet}}
             await state.update_data(war_target=target.name,war_available=available)
             await state.set_state(UIFlow.war_assets)
-            await call.message.edit_text("نیرو و ادوات را وارد کن. نمونه: army:swordsman=100,archer=20;equipment:ladder=2\nموجودی قابل اعزام: "+str(available))
+            await call.message.edit_text("نیرو و ادوات را وارد کن. نمونه: army:swordsman=100,archer=20;equipment:ladder=2\nموجودی قابل اعزام:\\n"+_format_available(available))
             await call.answer(); return
         if action=="arrival" and len(parts)==3:
             expedition_id=int(parts[2])
