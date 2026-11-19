@@ -9,7 +9,6 @@ from bot.database.base import Base
 from bot.database.session import make_engine, make_session_factory
 from bot import handlers
 from bot.game.engine import weekly_settlement, advance_world_clock
-from bot.integrations.site_api import configured as site_api_configured, synchronize_site_events
 
 async def main():
     cfg = get_settings()
@@ -73,26 +72,14 @@ async def main():
                 logging.exception("Weekly settlement failed")
             await asyncio.sleep(1800)
 
-    async def site_sync_worker():
-        while True:
-            try:
-                if site_api_configured():
-                    count = await synchronize_site_events(session_factory)
-                    if count:
-                        logging.info("Synchronized %s website castle updates", count)
-            except Exception:
-                logging.exception("Website/PostgreSQL synchronization failed; pending cursor will retry")
-            await asyncio.sleep(20)
-
     scheduler_task = asyncio.create_task(weekly_worker())
     war_task = asyncio.create_task(war_arrival_worker())
-    site_sync_task = asyncio.create_task(site_sync_worker())
     try:
         await bot.delete_webhook(drop_pending_updates=False)
         await dp.start_polling(bot, session_factory=session_factory)
     finally:
-        scheduler_task.cancel(); war_task.cancel(); site_sync_task.cancel()
-        for task in (scheduler_task,war_task,site_sync_task):
+        scheduler_task.cancel(); war_task.cancel()
+        for task in (scheduler_task,war_task):
             try: await task
             except asyncio.CancelledError: pass
         await bot.session.close()
