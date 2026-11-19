@@ -65,11 +65,12 @@ async def require_registered_group(message: Message, session):
     return group
 
 @router.message(CommandStart())
-async def start(message: Message):
+async def start(message: Message, session_factory):
     cfg = get_settings()
     if _is_admin_actor(message.from_user.id if message.from_user else None, message.chat, cfg):
+        from bot.handlers.ui import _admin_panel_text
         await message.answer(
-            "🔐 <b>مرکز فرماندهی KHATA-GAMES</b>\nمالک اصلی شناسایی شد. تنظیمات و گزارش‌ها از دکمه‌های همین پنل در دسترس هستند.",
+            await _admin_panel_text(session_factory),
             reply_markup=admin_menu(),
         )
         return
