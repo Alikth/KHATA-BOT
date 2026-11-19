@@ -165,9 +165,15 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
                 buttons.append([InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")])
                 markup = InlineKeyboardMarkup(inline_keyboard=buttons)
         elif action == "army":
-            body += "🛡 <b>ارتش و ادوات</b>\n"
+            army = (await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id==castle.id))).all()
+            gear = (await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id==castle.id))).all()
+            fleet = (await session.scalars(select(FleetShip).where(FleetShip.castle_id==castle.id))).all()
+            body += "🛡 <b>ارتش و ادوات</b>\nنیروها:\n"
+            body += "\n".join(f"{ARMY_LABELS.get(r.unit_key,r.unit_key)}: {r.count:,}" for r in army)
+            body += "\n\nادوات محاصره:\n" + "\n".join(f"{EQUIPMENT_LABELS.get(r.item_key,r.item_key)}: {r.count:,}" for r in gear)
+            body += "\n\nناوگان:\n" + "\n".join(f"{FLEET_LABELS.get(r.ship_key,r.ship_key)}: {r.count:,}" for r in fleet)
             econ = await session.get(CastleEconomyState, castle.id)
-            body += f"کارگاه: {econ.workshop_level if econ else 0}/5\nاسکله: {econ.port_level if econ else 0}/15\n"
+            body += f"\n\nکارگاه: {econ.workshop_level if econ else 0}/5\nاسکله: {econ.port_level if econ else 0}/15\n"
             markup = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🛠 کارگاه محاصره", callback_data="ui:workshop"),
                  InlineKeyboardButton(text="⚓ اسکله", callback_data="ui:port")],
