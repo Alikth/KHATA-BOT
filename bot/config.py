@@ -20,9 +20,6 @@ class Settings(BaseSettings):
     starting_food: int = 1000
     admin_chat_id: int = 0
     admin_audit_chat_id: int | None = None
-    site_api_url: str = ""
-    site_api_secret: str = ""
-    site_api_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
 
 @lru_cache
 def get_settings() -> Settings:
