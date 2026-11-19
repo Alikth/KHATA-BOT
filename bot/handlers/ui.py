@@ -442,8 +442,14 @@ async def war_assets_input(message:Message,state:FSMContext):
 @router.message(UIFlow.war_duration)
 async def war_duration_input(message:Message,state:FSMContext):
     try:
-        duration=int((message.text or "").strip())
-        if not 1<=duration<=10080: raise ValueError("مدت باید بین ۱ تا ۱۰۰۸۰ دقیقه باشد.")
+        raw=(message.text or "").strip()
+        if ":" in raw:
+            hours,minutes=(int(part) for part in raw.split(":",1))
+            if hours<0 or not 0<=minutes<60: raise ValueError("قالب زمان باید ساعت:دقیقه باشد؛ نمونه 1:30")
+            duration=hours*60+minutes
+        else:
+            duration=int(raw)
+        if not 1<=duration<=10080: raise ValueError("مدت باید بین ۱ دقیقه تا ۱۶۸ ساعت باشد.")
         await state.update_data(war_duration=duration)
         data=await state.get_data()
         kb=InlineKeyboardMarkup(inline_keyboard=[
@@ -452,9 +458,8 @@ async def war_duration_input(message:Message,state:FSMContext):
             [InlineKeyboardButton(text="👑 همراه + بازگشت خودکار",callback_data="ui:warfinal:yes:yes"),
              InlineKeyboardButton(text="بدون لرد + بازگشت خودکار",callback_data="ui:warfinal:no:yes")],
             [InlineKeyboardButton(text="لغو",callback_data="menu:war")]])
-        await message.answer(f"مقصد: {data['war_target']}\nمدت: {duration} دقیقه\nحضور لرد و بازگشت خودکار پس از رسیدن را انتخاب کن:",reply_markup=kb)
+        await message.answer(f"مقصد: {data['war_target']}\nمدت: {duration//60} ساعت و {duration%60} دقیقه\nحضور لرد و بازگشت خودکار پس از رسیدن را انتخاب کن:",reply_markup=kb)
     except ValueError as exc: await message.answer(str(exc))
-
 
 @router.callback_query(F.data.startswith("ui:warfinal:"))
 async def war_final(call:CallbackQuery,state:FSMContext,session_factory,bot):
