@@ -244,7 +244,10 @@ async def cancel_expedition(session: AsyncSession, expedition_id: int, lord: Lor
     row=await session.scalar(select(WarExpedition).where(WarExpedition.id==expedition_id).with_for_update())
     if not row or row.attacker_lord_id!=lord.id or row.status!="travelling" or row.command:
         raise ValueError("فقط لشکر در حال حرکت و بدون دستور جنگی قابل لغو است.")
-    now=datetime.now(timezone.utc)
+    from bot.game.engine import advance_world_clock
+    now=await advance_world_clock(session)
+    if row.arrival_at and now >= row.arrival_at:
+        raise ValueError("مهلت لغو تمام شده است؛ لشکر به مقصد رسیده یا باید وضعیت رسیدن آن ثبت شود.")
     for kind,items in (row.assets or row.units).items():
         for key,n in items.items():
             a=await _asset_row(session,row.origin_castle_id,kind,key,lord.id if row.asset_origin=="garrison" else None)
