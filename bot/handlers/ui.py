@@ -276,7 +276,7 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
         if action == "trade" and len(parts)>2 and parts[2]=="new":
             async with session_factory() as session:
                 lord, castle = await _player(session,call.from_user.id,call.message.chat.id)
-                rows=(await session.execute(select(Castle,Lord).join(Lord,Lord.castle_id==Castle.id).where(Castle.active.is_(True),Lord.status=="active",Lord.id!=lord.id).order_by(Castle.name))).all()
+                rows=(await session.execute(select(Castle,Lord).join(Lord,Lord.castle_id==Castle.id).join(GroupRegistration,GroupRegistration.castle_id==Castle.id).where(Castle.active.is_(True),Lord.status=="active",Lord.id!=lord.id,GroupRegistration.enabled.is_(True)).order_by(Castle.name))).all()
             if not rows: raise ValueError("قلعه دیگری با لرد فعال برای تجارت وجود ندارد.")
             kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🏰 {c.name}",callback_data=f"ui:trade:target:{l.id}")] for c,l in rows]+[[InlineKeyboardButton(text="لغو",callback_data="menu:trade")]])
             await call.message.edit_text("قلعه مقصد تجارت را انتخاب کن:",reply_markup=kb); await call.answer(); return
