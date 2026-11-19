@@ -165,3 +165,55 @@ async def upgrade_on_site(telegram_user_id: int, castle_name: str, category: str
     if not isinstance(snapshot, dict):
         raise SiteApiError("ارتقا انجام شد اما تصویر به‌روز قلعه از سایت دریافت نشد.")
     return {"result": result.get("result") or {}, "snapshot": snapshot}
+
+
+
+async def fetch_site_events(after_cursor: int = 0) -> dict:
+    return await _request("GET", f"/api/integration/v1/events?after={max(0, int(after_cursor))}&limit=100")
+
+
+async def synchronize_site_events(session_factory) -> int:
+    """Consume website change events and refresh assigned castle snapshots in PostgreSQL."""
+    if not configured():
+        return 0
+    from sqlalchemy import select
+    from bot.database.models import GameState
+    cursor = 0
+    async with session_factory() as session:
+        state = await session.get(GameState, "site_sync_cursor")
+        if state:
+            cursor = int((state.value or {}).get("cursor", 0))
+    response = await fetch_site_events(cursor)
+    events = response.get("events") or []
+    if not events:
+        return 0
+
+    applied = 0
+    for event in events:
+        castle_name = str(event.get("castle") or "")
+        event_id = int(event.get("id") or 0)
+        if not castle_name or event_id <= cursor:
+            continue
+        try:
+            async with session_factory() as session, session.begin():
+                castle = await session.scalar(select(Castle).where(Castle.name == castle_name))
+                if castle:
+                    lord = await session.scalar(select(Lord).where(
+                        Lord.castle_id == castle.id, Lord.status == "active"
+                    ))
+                    if lord:
+                        snapshot = await fetch_site_snapshot(lord.telegram_user_id, castle_name)
+                        await sync_snapshot_to_postgres(session, lord, snapshot)
+                state = await session.get(GameState, "site_sync_cursor")
+                value = dict(state.value or {}) if state else {}
+                value["cursor"] = event_id
+                if state:
+                    state.value = value
+                else:
+                    session.add(GameState(key="site_sync_cursor", value=value))
+            cursor = event_id
+            applied += 1
+        except Exception:
+            # Do not advance past a failed event; the next polling cycle retries it.
+            raise
+    return applied
