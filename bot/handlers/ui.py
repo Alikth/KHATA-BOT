@@ -292,7 +292,10 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
                 if kind=="sea":
                     econ=await session.get(CastleEconomyState,castle.id)
                     if not econ or not econ.port_enabled: raise ValueError("این قلعه بندر فعال ندارد.")
-                targets=(await session.scalars(select(Castle).where(Castle.active.is_(True),Castle.id!=castle.id).order_by(Castle.name))).all()
+                target_query=select(Castle).where(Castle.active.is_(True),Castle.id!=castle.id)
+                if kind=="sea":
+                    target_query=target_query.join(CastleEconomyState,CastleEconomyState.castle_id==Castle.id).where(CastleEconomyState.port_enabled.is_(True))
+                targets=(await session.scalars(target_query.order_by(Castle.name))).all()
             await state.update_data(war_type=kind,war_fake=parts[2]=="fake")
             kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🏰 {c.name}",callback_data=f"ui:war:target:{c.id}")] for c in targets]+[[InlineKeyboardButton(text="لغو",callback_data="menu:war")]])
             await call.message.edit_text("قلعه مقصد را انتخاب کن:",reply_markup=kb); await call.answer(); return
