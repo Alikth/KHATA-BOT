@@ -1,6 +1,6 @@
 # Two-way game parity: architecture and data mapping
 
-Status: Phase 1 audit/design. No live data is migrated, overwritten, or deleted by this document.
+Status: implementation in progress. The service bridge, D1 event capture, PostgreSQL snapshot consumer, asset report, superuser identity correction, siege guards and food-debt settlement are implemented on the feature branch. Live data has not been migrated or overwritten.
 
 ## Non-negotiable requirements
 
@@ -105,3 +105,37 @@ PostgreSQL:
 - Never resolve conflicting snapshots automatically.
 - Never merge this branch into `main` without explicit approval.
 - Keep the Telegram proxy PR separate from this feature and verify its status before merging.
+
+
+## Implemented on the feature branch
+
+- Private Worker service API protected by `BOT_API_SECRET`.
+- Superuser assignment mirror through `set lord`; no Telegram account-registration or website-account-linking flow.
+- Full D1 castle snapshot endpoint for assigned Telegram lords.
+- D1 change outbox and triggers for castle resources, production, camps, army, equipment, fleet and food debt.
+- Bot polling consumer that refreshes the PostgreSQL castle mirror from snapshots and persists its event cursor in `game_state`.
+- Bot asset menu now includes resources, production buildings, camps, army, equipment, fleet, workshop/port and food debt.
+- Bot production/camp upgrades can call the Worker, with siege checks and idempotent operation IDs.
+- Superuser identity no longer depends on the current chat ID/type.
+- Bot overdue food-debt settlement now applies proportional casualties after the 24-hour deadline and defers during siege.
+- Python CI passed `compileall` and `pytest` for the current tested commit.
+
+## Required deployment configuration
+
+1. Generate a long random secret and configure it in Cloudflare Worker secrets as `BOT_API_SECRET` (for example with `npx wrangler secret put BOT_API_SECRET`).
+2. Configure the same value in the bot's local, uncommitted `.env` as `SITE_API_SECRET`.
+3. Set `SITE_API_URL=https://khata-games.khta.workers.dev` (or the actual deployed Worker origin) and `SITE_API_TIMEOUT_SECONDS=15`.
+4. Apply D1 migration `migrations/0006_bot_integration.sql` and PostgreSQL migration `bot/database/migrations/0003_integration_sync.sql` after taking separate verified backups. The Worker also creates its integration tables/triggers idempotently on the first authenticated integration call.
+5. Restart the bot, then assign a test lord using `set lord` in a registered castle group. Verify that the D1 snapshot populates PostgreSQL and that a website-side asset change appears in the bot within the polling interval.
+
+Do not copy a real secret into GitHub, chat, source code, or `.env.example`.
+
+## Remaining parity work (not yet complete)
+
+- Bot-originated trade creation/accept/reject/cancel is still PostgreSQL-local; it needs Worker service commands and matching D1 trade records.
+- Bot-originated warfare, garrison, alliance, scenario and troop-transfer mutations still need Worker service commands and durable cross-store identifiers.
+- The website's player-facing ownership model is still based on website accounts; this integration does not create or link such accounts to Telegram. Telegram assignments are a separate bot authorization mapping.
+- Workshop, port, equipment construction and all admin asset mutations still need write-through service endpoints.
+- Full read-only reconciliation report for every castle has not yet been generated; do not use a live snapshot to overwrite an existing PostgreSQL castle until that report is reviewed.
+- Rules/catalog version drift checks, sync conflict reporting, event acknowledgement/retention, outage recovery tests and live end-to-end tests remain.
+- No production deployment or real D1/PostgreSQL migration has been executed by this branch.
