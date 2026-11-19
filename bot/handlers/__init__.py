@@ -1192,6 +1192,9 @@ async def admin_set_lord_castle_cmd(message: Message, session_factory, bot):
     try:
         telegram_id, castle_id = int(parts[1]), int(parts[2])
         async with session_factory() as session, session.begin():
+            from bot.game.controls import get_controls
+            if not (await get_controls(session))["castle_selection_open"]:
+                raise ValueError("تخصیص یا انتقال لرد به قلعه در حال حاضر قفل است.")
             lord = await session.scalar(select(Lord).where(Lord.telegram_user_id == telegram_id).with_for_update())
             castle = await session.get(Castle, castle_id)
             if not lord or not castle:
