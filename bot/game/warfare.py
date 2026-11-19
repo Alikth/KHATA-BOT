@@ -225,9 +225,10 @@ async def answer_transfer(session: AsyncSession, request_id: int, lord: Lord, ac
     if accept:
         for kind,items in row.assets.items():
             for key,n in items.items():
-                a=await _asset_row(session,expedition.target_castle_id,kind,key,row.sender_lord_id)
+                # An accepted troop transfer changes ownership to the receiving lord.
+                a=await _asset_row(session,expedition.target_castle_id,kind,key,row.receiver_lord_id)
                 if a:a.count+=int(n)
-                else:session.add(GarrisonAsset(castle_id=expedition.target_castle_id,owner_lord_id=row.sender_lord_id,asset_kind=kind,asset_key=key,count=int(n)))
+                else:session.add(GarrisonAsset(castle_id=expedition.target_castle_id,owner_lord_id=row.receiver_lord_id,asset_kind=kind,asset_key=key,count=int(n)))
     else:
         for kind,items in row.assets.items():
             for key,n in items.items():
