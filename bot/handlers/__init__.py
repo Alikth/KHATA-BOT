@@ -335,7 +335,11 @@ async def offers(message: Message, session_factory):
 
 @router.callback_query(F.data.startswith("trade:"))
 async def trade_callback(call: CallbackQuery, bot, session_factory):
-    _, action, offer_id = call.data.split(":")
+    parts = (call.data or "").split(":")
+    if len(parts) != 3 or parts[1] not in ("accept", "reject") or not parts[2].isdigit():
+        await call.answer("درخواست نامعتبر است.", show_alert=True)
+        return
+    _, action, offer_id = parts
     if action not in ("accept", "reject"):
         await call.answer("عملیات نامعتبر است.", show_alert=True)
         return
@@ -508,7 +512,11 @@ async def upgrade_prompt(call: CallbackQuery, session_factory):
     if not call.from_user or not call.message:
         await call.answer()
         return
-    _, category, key = call.data.split(":", 2)
+    parts = (call.data or "").split(":", 2)
+    if len(parts) != 3 or parts[1] not in ("production", "camp", "special_camp") or not parts[2]:
+        await call.answer("درخواست ارتقا نامعتبر است.", show_alert=True)
+        return
+    _, category, key = parts
     async with session_factory() as session:
         lord = await get_lord(session, call.from_user.id)
         if not lord:
@@ -556,7 +564,11 @@ async def upgrade_confirm(call: CallbackQuery, session_factory):
     if not call.from_user or not call.message:
         await call.answer()
         return
-    _, category, key = call.data.split(":", 2)
+    parts = (call.data or "").split(":", 2)
+    if len(parts) != 3 or parts[1] not in ("production", "camp", "special_camp") or not parts[2]:
+        await call.answer("درخواست ارتقا نامعتبر است.", show_alert=True)
+        return
+    _, category, key = parts
     try:
         async with session_factory() as session, session.begin():
             lord = await get_lord(session, call.from_user.id)
