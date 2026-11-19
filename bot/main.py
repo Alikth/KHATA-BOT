@@ -54,13 +54,17 @@ async def main():
                         origin=await session.get(Castle,row.origin_castle_id)
                         target=await session.get(Castle,row.target_castle_id)
                         groups=(await session.scalars(select(GroupRegistration).where(GroupRegistration.castle_id.in_([row.origin_castle_id,row.target_castle_id]),GroupRegistration.enabled.is_(True)))).all()
-                        if row.asset_origin=="fake":
-                            text=f"🎭 لشکرکشی نمایشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nهیچ دارایی جابه‌جا یا کسر نشد."
-                            markup=None
-                        else:
-                            text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nدستور بعدی را انتخاب کن."
-                            markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ حمله / محاصره / اردوگاه",callback_data=f"ui:arrival:{row.id}")]])
-                        notices.extend((g.telegram_chat_id,text,markup) for g in groups)
+                        for group in groups:
+                            if row.asset_origin=="fake":
+                                text=f"🎭 لشکرکشی نمایشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nهیچ دارایی جابه‌جا یا کسر نشد."
+                                markup=None
+                            elif group.castle_id==row.origin_castle_id:
+                                text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nدستور بعدی را انتخاب کن."
+                                markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ حمله / محاصره / اردوگاه",callback_data=f"ui:arrival:{row.id}")]])
+                            else:
+                                text=f"⚠️ لشکر #{row.id} از {origin.name} به قلعه {target.name} رسید."
+                                markup=None
+                            notices.append((group.telegram_chat_id,text,markup))
                 for chat_id,notice,markup in notices:
                     try: await bot.send_message(chat_id,notice,reply_markup=markup)
                     except Exception: logging.exception("Could not publish war arrival to chat %s",chat_id)
