@@ -119,7 +119,9 @@ async def ensure_castle_not_under_siege(session: AsyncSession, castle_id: int) -
 
 
 async def upgrade(session: AsyncSession, lord: Lord, category: str, key: str):
-    await ensure_castle_not_under_siege(session, lord.castle_id)
+    # A siege blocks economic buildings, but camp upgrades remain available.
+    if category == "production":
+        await ensure_castle_not_under_siege(session, lord.castle_id)
     if category=="production":
         defs=GENERAL_PRODUCTIONS.copy(); special=SPECIAL_PRODUCTIONS.get((await session.get(Castle,lord.castle_id)).region)
         if special: defs[special["key"]]=special
@@ -213,14 +215,20 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
         lords=(await session.scalars(select(Lord).where(Lord.castle_id==castle.id,Lord.status=="active"))).all()
         if not lords: econ.last_week_key=week; continue
         lord=lords[0]; changes={}
+        try:
+            await ensure_castle_not_under_siege(session, castle.id)
+            under_siege = False
+        except ValueError:
+            under_siege = True
         prods=(await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id==castle.id))).all()
         camps=(await session.scalars(select(CampLevel).where(CampLevel.castle_id==castle.id))).all()
         scamps=(await session.scalars(select(SpecialCampLevel).where(SpecialCampLevel.castle_id==castle.id))).all()
         army=(await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id==castle.id))).all()
-        for row in prods:
-            d=GENERAL_PRODUCTIONS.get(row.production_key)
-            if not d and row.production_key==SPECIAL_PRODUCTIONS.get(castle.region,{}).get("key"): d=SPECIAL_PRODUCTIONS[castle.region]
-            if d and row.level: changes[d["base"]]=changes.get(d["base"],0)+row.level*int(d["yield"])*int(REGION_MULTIPLIERS.get(castle.region,{}).get(row.production_key,1))
+        if not under_siege:
+            for row in prods:
+                d=GENERAL_PRODUCTIONS.get(row.production_key)
+                if not d and row.production_key==SPECIAL_PRODUCTIONS.get(castle.region,{}).get("key"): d=SPECIAL_PRODUCTIONS[castle.region]
+                if d and row.level: changes[d["base"]]=changes.get(d["base"],0)+row.level*int(d["yield"])*int(REGION_MULTIPLIERS.get(castle.region,{}).get(row.production_key,1))
         for row in camps:
             d=GENERAL_CAMPS.get(row.camp_key)
             if d and row.level: changes[d["unit"]]=changes.get(d["unit"],0)+row.level*int(d["yield"])
@@ -239,7 +247,7 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
                 unit=await session.scalar(select(ArmyUnit).where(ArmyUnit.castle_id==castle.id,ArmyUnit.unit_key==key).with_for_update())
                 if unit: unit.count+=amount
                 else: session.add(ArmyUnit(castle_id=castle.id,unit_key=key,count=amount))
-        if econ.port_enabled and econ.port_level>0:
+        if not under_siege and econ.port_enabled and econ.port_level>0:
             for ship_key in ("transport","warship"):
                 ship=await session.scalar(select(FleetShip).where(FleetShip.castle_id==castle.id,FleetShip.ship_key==ship_key).with_for_update())
                 if ship: ship.count+=econ.port_level
