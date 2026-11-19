@@ -84,7 +84,7 @@ async def create_trade_bundle(session: AsyncSession, sender: Lord, recipient_id:
     if not recipient or recipient.id==sender.id: raise ValueError("بازیکن مقصد معتبر نیست.")
     if not offered or not requested: raise ValueError("هر دو طرف معامله باید دارایی داشته باشند.")
     if len(offered)>20 or len(requested)>20: raise ValueError("حداکثر ۲۰ نوع دارایی در هر سمت مجاز است.")
-    rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id==sender.id).with_for_update())).all()
+    rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id==sender.id).order_by(ResourceBalance.resource_code).with_for_update())).all()
     balance={r.resource_code:r.amount for r in rows}
     for code,raw in offered.items():
         amount=int(raw)
@@ -145,7 +145,7 @@ async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram
         offer.status="completed"
         return offer
     ids = sorted([offer.sender_lord_id, offer.recipient_lord_id])
-    rows = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_(ids)).with_for_update())).all()
+    rows = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_(ids)).order_by(ResourceBalance.lord_id, ResourceBalance.resource_code).with_for_update())).all()
     lookup = {(r.lord_id,r.resource_code):r for r in rows}
     so, rr = lookup.get((offer.sender_lord_id,offer.offered_resource)), lookup.get((offer.recipient_lord_id,offer.requested_resource))
     sr, ro = lookup.get((offer.sender_lord_id,offer.requested_resource)), lookup.get((offer.recipient_lord_id,offer.offered_resource))
