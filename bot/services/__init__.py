@@ -98,6 +98,20 @@ async def create_trade_bundle(session: AsyncSession, sender: Lord, recipient_id:
         offered_assets={k:int(v) for k,v in offered.items()},requested_assets={k:int(v) for k,v in requested.items()},status="pending")
     session.add(offer);await session.flush();return offer
 
+async def cancel_trade(session: AsyncSession, offer_id: int, sender_telegram_id: int):
+    """Allow only the offer's sender to cancel a still-pending trade."""
+    offer = await session.scalar(
+        select(TradeOffer).where(TradeOffer.id == offer_id).with_for_update()
+    )
+    if not offer or offer.status != "pending":
+        raise ValueError("این پیشنهاد دیگر فعال نیست.")
+    sender = await get_lord(session, sender_telegram_id)
+    if not sender or sender.id != offer.sender_lord_id:
+        raise ValueError("فقط فرستنده پیشنهاد می‌تواند آن را لغو کند.")
+    offer.status = "cancelled"
+    return offer
+
+
 async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram_id: int, accept: bool):
     offer = await session.scalar(select(TradeOffer).where(TradeOffer.id == offer_id).with_for_update())
     if not offer or offer.status != "pending":
