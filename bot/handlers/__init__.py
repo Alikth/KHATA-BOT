@@ -69,8 +69,7 @@ async def start(message: Message):
     cfg = get_settings()
     if _is_admin_actor(message.from_user.id if message.from_user else None, message.chat, cfg):
         await message.answer(
-            "🔐 <b>مرکز فرماندهی KHATA-GAMES</b>\n"
-            "مالک اصلی شناسایی شد. مدیریت جهان از همین گروه و همین پنل انجام می‌شود.",
+            "🔐 <b>مرکز فرماندهی KHATA-GAMES</b>\nمالک اصلی شناسایی شد. تنظیمات و گزارش‌ها از دکمه‌های همین پنل در دسترس هستند.",
             reply_markup=admin_menu(),
         )
         return
@@ -100,12 +99,13 @@ async def help_cmd(message: Message, session_factory):
 async def persian_menu_callback(call: CallbackQuery, session_factory):
     """Render real player data from inline navigation; no command text is emitted."""
     action = call.data.split(":", 1)[1]
-    await call.answer()
     if not call.from_user or not call.message:
+        await call.answer()
         return
 
     cfg = get_settings()
     if action == "back":
+        await call.answer()
         await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
         return
     from bot.handlers.ui import render_player_section
