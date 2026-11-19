@@ -8,7 +8,7 @@ from html import escape
 from bot.config import get_settings
 from bot.database.models import Lord, TradeOffer, Castle, ResourceBalance, AdminAuditLog
 from bot.services import (get_lord, get_group, create_lord, create_castle_group, get_balances,
-                          create_trade, resolve_trade, audit, is_world_paused, set_world_paused,
+                          create_trade, resolve_trade, cancel_trade, audit, is_world_paused, set_world_paused,
                           RESOURCE_NAMES)
 from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_menu
 
@@ -353,6 +353,28 @@ async def trade_callback(call: CallbackQuery, bot, session_factory):
         await call.answer("انجام شد")
     except ValueError as exc:
         await call.answer(str(exc), show_alert=True)
+
+@router.message(Command("canceloffer"))
+async def cancel_own_trade_offer(message: Message, session_factory):
+    parts = (message.text or "").split()
+    if len(parts) != 2:
+        await message.answer("فرمت: /canceloffer شناسه_پیشنهاد")
+        return
+    try:
+        offer_id = int(parts[1])
+        async with session_factory() as session, session.begin():
+            group = await require_registered_group(message, session)
+            if not group:
+                return
+            lord = await get_lord(session, message.from_user.id)
+            if not lord or lord.castle_id != group.castle_id:
+                raise ValueError("در این گروه لرد نیستی.")
+            offer = await cancel_trade(session, offer_id, message.from_user.id)
+            await audit(session, message.from_user.id, "trade_offer_cancelled", str(offer.id))
+        await message.answer(f"پیشنهاد تجارت #{offer.id} لغو شد.")
+    except (ValueError, TypeError) as exc:
+        await message.answer(str(exc))
+
 
 @router.callback_query(F.data.startswith("admin:"))
 async def admin_menu_callback(call: CallbackQuery, session_factory):
