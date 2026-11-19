@@ -238,6 +238,7 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
         await call.message.edit_text(body, reply_markup=markup)
     except Exception:
         await call.message.answer(body, reply_markup=markup)
+    await call.answer()
 
 
 @router.callback_query(F.data.startswith("ui:") & ~F.data.startswith("ui:warfinal:"))
@@ -249,11 +250,9 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext):
     action = parts[1] if len(parts)>1 else ""
     try:
         if action in ("workshop","port") and len(parts)==2:
-            await call.answer()
             await render_player_section(call, session_factory, action)
             return
         if action in ("assets","buildings","camps","army","trade","war","help") and len(parts)==2:
-            await call.answer()
             await render_player_section(call, session_factory, action)
             return
         if action == "trade" and len(parts)>2 and parts[2]=="new":
