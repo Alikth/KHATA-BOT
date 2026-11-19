@@ -342,6 +342,44 @@ async def offers(message: Message, session_factory):
         requested=offer.requested_assets or {offer.requested_resource:offer.requested_amount}
         await message.answer(f"پیشنهاد #{offer.id}: دریافت {offered}، پرداخت {requested}", reply_markup=trade_decision(offer.id))
 
+@router.message(Command("tradehistory"))
+async def trade_history_cmd(message: Message, session_factory):
+    async with session_factory() as session:
+        group = await require_registered_group(message, session)
+        if not group:
+            return
+        lord = await get_lord(session, message.from_user.id)
+        if not lord or lord.castle_id != group.castle_id:
+            await message.answer("در این گروه لرد نیستی.")
+            return
+        rows = (await session.scalars(
+            select(TradeOffer).where(
+                (TradeOffer.sender_lord_id == lord.id) |
+                (TradeOffer.recipient_lord_id == lord.id)
+            ).order_by(TradeOffer.id.desc()).limit(30)
+        )).all()
+        lords = (await session.scalars(
+            select(Lord).where(
+                Lord.id.in_({x.sender_lord_id for x in rows} | {x.recipient_lord_id for x in rows})
+            )
+        )).all() if rows else []
+        names = {x.id: x.display_name for x in lords}
+    if not rows:
+        await message.answer("هنوز سابقه تجارتی برایت ثبت نشده است.")
+        return
+    lines = ["📜 تاریخچه تجارت (۳۰ مورد آخر):"]
+    for offer in rows:
+        offered = offer.offered_assets or {offer.offered_resource: offer.offered_amount}
+        requested = offer.requested_assets or {offer.requested_resource: offer.requested_amount}
+        direction = "ارسالی" if offer.sender_lord_id == lord.id else "دریافتی"
+        lines.append(
+            f"#{offer.id} | {direction} | {names.get(offer.sender_lord_id, str(offer.sender_lord_id))} ↔ "
+            f"{names.get(offer.recipient_lord_id, str(offer.recipient_lord_id))}\n"
+            f"{offered} در برابر {requested} | وضعیت: {offer.status}"
+        )
+    await message.answer("\n\n".join(lines))
+
+
 @router.callback_query(F.data.startswith("trade:"))
 async def trade_callback(call: CallbackQuery, bot, session_factory):
     parts = (call.data or "").split(":")
