@@ -232,6 +232,10 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
 @router.message(F.text.regexp(r"(?i)^set lord$"))
 async def set_lord_reply(message: Message, session_factory):
     cfg = get_settings()
+    from bot.integrations.site_api import configured
+    if not configured():
+        await message.answer("اتصال امن بات به سایت هنوز تنظیم نشده است؛ ابتدا SITE_API_URL و SITE_API_SECRET را تنظیم کن. هیچ موجودی محلی به‌عنوان موجودی واقعی ثبت نشد.")
+        return
     if not message.from_user or message.from_user.id != cfg.bot_owner_id:
         return
     if not message.reply_to_message or not message.reply_to_message.from_user:
@@ -481,6 +485,10 @@ async def buildings_cmd(message: Message, session_factory):
 
 @router.message(Command("upgrade"))
 async def upgrade_cmd(message: Message, session_factory):
+    from bot.integrations.site_api import configured
+    if not configured():
+        await message.answer("ارتقا تا زمان تنظیم اتصال امن به سایت غیرفعال است تا موجودی دو دیتابیس از هم جدا نشود.")
+        return
     parts=(message.text or "").split()
     if len(parts)!=3 or parts[1] not in ("production","camp","special_camp"):
         await message.answer("فرمت: /upgrade production farm\nیا /upgrade camp swordsman\nیا /upgrade special_camp ranger"); return
@@ -496,7 +504,7 @@ async def upgrade_cmd(message: Message, session_factory):
                 remote = await upgrade_on_site(message.from_user.id, castle.name, parts[1], parts[2])
                 await sync_snapshot_to_postgres(session, lord, remote["snapshot"])
                 level = int(remote["result"].get("newLevel", 0))
-                definition = (GENERAL_PRODUCTIONS.get(parts[2]) or GENERAL_CAMPS.get(parts[2]) or next((x for x in SPECIAL_CAMPS.get(castle.region,[]) if x["key"]==parts[2]), {}))
+                definition = (GENERAL_PRODUCTIONS.get(parts[2]) or (SPECIAL_PRODUCTIONS.get(castle.region) if SPECIAL_PRODUCTIONS.get(castle.region,{}).get("key")==parts[2] else None) or GENERAL_CAMPS.get(parts[2]) or next((x for x in SPECIAL_CAMPS.get(castle.region,[]) if x["key"]==parts[2]), {}))
             else:
                 level,definition=await engine_upgrade(session,lord,parts[1],parts[2])
             await audit(session,message.from_user.id,"building_upgraded",str(lord.castle_id),f"{parts[1]}:{parts[2]}:{level}")
