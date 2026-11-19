@@ -142,7 +142,9 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
                     if row.level < int(d["max"]):
                         buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {d['label']}", callback_data=f"upgrade:production:{row.production_key}")])
                 buttons.append([InlineKeyboardButton(text="🛠 کارگاه و ادوات", callback_data="ui:workshop")])
-                buttons.append([InlineKeyboardButton(text="⚓ اسکله", callback_data="ui:port")])
+                econ=await session.get(CastleEconomyState,castle.id)
+                if econ and econ.port_enabled:
+                    buttons.append([InlineKeyboardButton(text="⚓ اسکله", callback_data="ui:port")])
                 buttons.append([InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")])
                 markup = InlineKeyboardMarkup(inline_keyboard=buttons)
             else:
@@ -174,11 +176,13 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
             body += "\n\nناوگان:\n" + "\n".join(f"{FLEET_LABELS.get(r.ship_key,r.ship_key)}: {r.count:,}" for r in fleet)
             econ = await session.get(CastleEconomyState, castle.id)
             body += f"\n\nکارگاه: {econ.workshop_level if econ else 0}/5\nاسکله: {econ.port_level if econ else 0}/15\n"
-            markup = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🛠 کارگاه محاصره", callback_data="ui:workshop"),
-                 InlineKeyboardButton(text="⚓ اسکله", callback_data="ui:port")],
+            military_buttons=[[InlineKeyboardButton(text="🛠 کارگاه محاصره", callback_data="ui:workshop")]]
+            if econ and econ.port_enabled:
+                military_buttons[0].append(InlineKeyboardButton(text="⚓ اسکله", callback_data="ui:port"))
+            military_buttons.extend([
                 [InlineKeyboardButton(text="🚩 لشکرکشی زمینی", callback_data="ui:war")],
                 [InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")]])
+            markup = InlineKeyboardMarkup(inline_keyboard=military_buttons)
         elif action == "workshop":
             econ = await session.get(CastleEconomyState, castle.id)
             level = econ.workshop_level if econ else 0
