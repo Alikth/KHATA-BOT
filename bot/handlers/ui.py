@@ -275,8 +275,16 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
                 offer=await session.scalar(select(TradeOffer).where(TradeOffer.id==int(parts[2])).with_for_update())
                 if not offer or offer.sender_lord_id!=lord.id or offer.status!="pending": raise ValueError("فقط پیشنهاد معلق خودت را می‌توانی لغو کنی.")
                 offer.status="cancelled"
+                recipient=await session.get(Lord,offer.recipient_lord_id)
+                recipient_group=await session.scalar(select(GroupRegistration).where(
+                    GroupRegistration.castle_id==recipient.castle_id,
+                    GroupRegistration.enabled.is_(True)))
+                recipient_chat_id=recipient_group.telegram_chat_id if recipient_group else None
                 await audit(session,call.from_user.id,"trade_offer_cancelled",str(offer.id))
-            await call.message.edit_text(f"پیشنهاد تجارت #{parts[2]} لغو شد.",reply_markup=_back());await call.answer();return
+            await call.message.edit_text(f"پیشنهاد تجارت #{parts[2]} لغو شد.",reply_markup=_back())
+            if recipient_chat_id:
+                await bot.send_message(recipient_chat_id,f"❌ پیشنهاد تجارت #{parts[2]} توسط فرستنده لغو شد.")
+            await call.answer();return
         if action=="trade" and len(parts)==4 and parts[2]=="target":
             async with session_factory() as session:
                 lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
