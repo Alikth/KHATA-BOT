@@ -300,7 +300,7 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
                 targets=(await session.scalars(target_query.order_by(Castle.name))).all()
             await state.update_data(war_type=kind,war_fake=parts[2]=="fake")
             kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🏰 {c.name}",callback_data=f"ui:war:target:{c.id}")] for c in targets]+[[InlineKeyboardButton(text="لغو",callback_data="menu:war")]])
-            await call.message.edit_text("قلعه مقصد را انتخاب کن:",reply_markup=kb); await call.answer(); return
+            await call.message.edit_text(f"قلعه مبدأ: {castle.name}\\nقلعه مقصد را انتخاب کن:",reply_markup=kb); await call.answer(); return
         if action=="war" and len(parts)==4 and parts[2]=="target":
             async with session_factory() as session:
                 lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
