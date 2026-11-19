@@ -218,7 +218,7 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
         await call.message.answer(body, reply_markup=markup)
 
 
-@router.callback_query(F.data.startswith("ui:"))
+@router.callback_query(F.data.startswith("ui:") & ~F.data.startswith("ui:warfinal:"))
 async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext):
     if not call.message or not call.from_user:
         await call.answer()
@@ -230,7 +230,7 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext):
             await call.answer()
             await render_player_section(call, session_factory, action)
             return
-        if action in ("assets","buildings","camps","army","trade","war","help"):
+        if action in ("assets","buildings","camps","army","trade","war","help") and len(parts)==2:
             await call.answer()
             await render_player_section(call, session_factory, action)
             return
