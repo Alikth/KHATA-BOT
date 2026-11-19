@@ -36,14 +36,28 @@ async def _get_assets(session, castle_id, kinds=("army","equipment","fleet")):
         result[kind]={getattr(r,field):int(r.count) for r in rows if r.count}
     return result
 
-async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_name: str, expedition_type: str, duration_minutes: int, assets: dict, lord_present=True, use_garrison=False, source_castle_id=None):
+async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_name: str, expedition_type: str, duration_minutes: int, assets: dict, lord_present=True, use_garrison=False, source_castle_id=None, fake=False, return_after_arrival=False):
     from bot.game.engine import advance_world_clock
     world_state=await session.get(GameState,"world")
     if world_state is None or bool((world_state.value or {}).get("paused",True)):
         raise ValueError("جهان بازی متوقف است؛ در زمان توقف امکان لشکرکشی وجود ندارد.")
     world_now=await advance_world_clock(session)
+    from bot.game.controls import get_controls
+    controls=await get_controls(session)
+    if not controls["expeditions_open"]:
+        raise ValueError("ثبت لشکرکشی توسط مدیریت قفل شده است.")
     if expedition_type not in ("land","sea"): raise ValueError("نوع لشکرکشی باید land یا sea باشد.")
     if not 1 <= duration_minutes <= 10080: raise ValueError("مدت سفر باید بین ۱ دقیقه تا ۷ روز باشد.")
+    if fake:
+        week_start=datetime(world_now.year,world_now.month,world_now.day,tzinfo=timezone.utc)
+        week_start=week_start-timedelta(days=world_now.weekday())
+        used=await session.scalar(select(WarExpedition.id).where(
+            WarExpedition.attacker_lord_id==lord.id,
+            WarExpedition.asset_origin=="fake",
+            WarExpedition.created_at>=week_start,
+        ).limit(1))
+        if used:
+            raise ValueError("لشکرکشی نمایشی این هفته را قبلاً استفاده کرده‌ای.")
     origin_id=source_castle_id or lord.castle_id
     validate_expedition_origin(lord, origin_id, use_garrison)
     origin=await session.get(Castle,origin_id)
@@ -73,13 +87,16 @@ async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_nam
         capacity=transport*600+warship*400
         weight=sum(n*(2 if key=="cavalry" else 1) for key,n in clean["army"].items())
         if transport+warship<1 or weight>capacity: raise ValueError("ظرفیت ناوگان برای ارتش انتخاب‌شده کافی نیست.")
-    for kind,values in clean.items():
-        for key,n in values.items():
-            row=await _asset_row(session,origin.id,kind,key,lord.id if use_garrison else None); row.count-=n
+    if not fake:
+        for kind,values in clean.items():
+            for key,n in values.items():
+                row=await _asset_row(session,origin.id,kind,key,lord.id if use_garrison else None); row.count-=n
     now=world_now
     expedition=WarExpedition(attacker_lord_id=lord.id,origin_castle_id=origin.id,target_castle_id=target.id,
         status="travelling",units=clean,assets=clean,expedition_type=expedition_type,lord_present=bool(lord_present),
-        launched_at=now,arrival_at=now+timedelta(minutes=duration_minutes),asset_origin="garrison" if use_garrison else "castle")
+        launched_at=now,arrival_at=now+timedelta(minutes=duration_minutes),
+        asset_origin="fake" if fake else ("garrison" if use_garrison else "castle"),
+        return_after_arrival=bool(return_after_arrival))
     session.add(expedition); await session.flush(); return expedition
 
 async def arrive_expeditions(session: AsyncSession):
@@ -88,8 +105,29 @@ async def arrive_expeditions(session: AsyncSession):
     if world_state is None or bool((world_state.value or {}).get("paused",True)): return []
     now=await advance_world_clock(session)
     rows=(await session.scalars(select(WarExpedition).where(WarExpedition.status=="travelling",WarExpedition.arrival_at<=now).with_for_update())).all()
-    for row in rows: row.status="arrived"
-    return rows
+    notifications=[]
+    for row in rows:
+        if row.return_after_arrival:
+            duration=max(60,(row.arrival_at-row.launched_at).total_seconds()) if row.launched_at and row.arrival_at else 3600
+            row.status="returning"
+            row.return_at=now+timedelta(seconds=duration)
+        else:
+            row.status="arrived"
+            notifications.append(row)
+    returning=(await session.scalars(select(WarExpedition).where(WarExpedition.status=="returning",WarExpedition.return_at<=now).with_for_update())).all()
+    for row in returning:
+        if row.asset_origin != "fake":
+            for kind,items in (row.assets or row.units or {}).items():
+                for key,count in items.items():
+                    owner=row.attacker_lord_id if row.asset_origin=="garrison" else None
+                    asset=await _asset_row(session,row.origin_castle_id,kind,key,owner)
+                    if asset: asset.count+=int(count)
+                    elif owner is not None:
+                        session.add(GarrisonAsset(castle_id=row.origin_castle_id,owner_lord_id=owner,asset_kind=kind,asset_key=key,count=int(count)))
+            row.status="completed"
+        else:
+            row.status="completed"
+    return notifications
 
 async def set_arrival_choice(session: AsyncSession, expedition_id: int, lord: Lord, choice: str):
     row=await session.scalar(select(WarExpedition).where(WarExpedition.id==expedition_id).with_for_update())
@@ -140,9 +178,15 @@ async def issue_war_command(session: AsyncSession, expedition_id: int, lord: Lor
     if command not in ("attack","siege","deploy"): raise ValueError("دستور باید attack، siege یا deploy باشد.")
     from bot.game.engine import advance_world_clock
     now=await advance_world_clock(session)
-    if row.arrival_at and now > row.arrival_at + timedelta(minutes=90): raise ValueError("مهلت ۹۰ دقیقه‌ای ثبت دستور لشکرکشی تمام شده است.")
+    from bot.game.controls import get_controls
+    controls=await get_controls(session)
+    deadline=int(controls["expedition_order_minutes"])
+    if row.arrival_at and now > row.arrival_at + timedelta(minutes=deadline): raise ValueError(f"مهلت {deadline} دقیقه‌ای ثبت دستور لشکرکشی تمام شده است.")
     row.command=command; row.command_at=now
-    if command=="attack": row.scenario_deadline_at=now+timedelta(hours=24)
+    if command=="attack":
+        from bot.game.controls import get_controls
+        controls=await get_controls(session)
+        row.scenario_deadline_at=now+timedelta(hours=int(controls["scenario_deadline_hours"]))
     defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
     if defender: row.defender_assets=await _get_assets(session,row.target_castle_id,("army","equipment","fleet"))
     if command=="deploy":
@@ -156,7 +200,7 @@ async def submit_scenario(session: AsyncSession, expedition_id: int, lord: Lord,
         raise ValueError("برای این نبرد امکان ارسال سناریو وجود ندارد.")
     from bot.game.engine import advance_world_clock
     now=await advance_world_clock(session)
-    if now>=row.scenario_deadline_at: raise ValueError("مهلت ۲۴ ساعته ارسال سناریو تمام شده است.")
+    if now>=row.scenario_deadline_at: raise ValueError("مهلت ارسال سناریو تمام شده است.")
     side="attacker" if lord.id==row.attacker_lord_id else "defender" if lord.castle_id==row.target_castle_id else None
     if not side: raise ValueError("تو در این نبرد مهاجم یا مدافع نیستی.")
     if not text.strip() or len(text)>8000: raise ValueError("متن سناریو باید بین ۱ تا ۸۰۰۰ نویسه باشد.")
