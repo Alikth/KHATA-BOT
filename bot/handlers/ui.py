@@ -415,10 +415,12 @@ async def war_duration_input(message:Message,state:FSMContext):
         await state.update_data(war_duration=duration)
         data=await state.get_data()
         kb=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👑 لرد همراه باشد",callback_data="ui:warfinal:yes"),
-             InlineKeyboardButton(text="بدون حضور لرد",callback_data="ui:warfinal:no")],
+            [InlineKeyboardButton(text="👑 لرد همراه باشد",callback_data="ui:warfinal:yes:no"),
+             InlineKeyboardButton(text="بدون حضور لرد",callback_data="ui:warfinal:no:no")],
+            [InlineKeyboardButton(text="👑 همراه + بازگشت خودکار",callback_data="ui:warfinal:yes:yes"),
+             InlineKeyboardButton(text="بدون لرد + بازگشت خودکار",callback_data="ui:warfinal:no:yes")],
             [InlineKeyboardButton(text="لغو",callback_data="menu:war")]])
-        await message.answer(f"مقصد: {data['war_target']}\nمدت: {duration} دقیقه\nحضور لرد را انتخاب کن:",reply_markup=kb)
+        await message.answer(f"مقصد: {data['war_target']}\nمدت: {duration} دقیقه\nحضور لرد و بازگشت خودکار پس از رسیدن را انتخاب کن:",reply_markup=kb)
     except ValueError as exc: await message.answer(str(exc))
 
 
@@ -427,11 +429,14 @@ async def war_final(call:CallbackQuery,state:FSMContext,session_factory,bot):
     if not call.from_user or not call.message: await call.answer();return
     data=await state.get_data()
     if not data.get("war_target"): await call.answer("فرایند منقضی شده است.",show_alert=True);return
+    parts=(call.data or "").split(":")
+    lord_present=len(parts)>2 and parts[2]=="yes"
+    return_after=len(parts)>3 and parts[3]=="yes"
     try:
         async with session_factory() as session,session.begin():
             lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
             fake=bool(data.get("war_fake"))
-            row=await launch_expedition(session,lord,data["war_target"],data["war_type"],int(data["war_duration"]),data["war_assets"],lord_present=call.data.endswith("yes"),fake=fake)
+            row=await launch_expedition(session,lord,data["war_target"],data["war_type"],int(data["war_duration"]),data["war_assets"],lord_present=lord_present,fake=fake,return_after_arrival=return_after)
             await audit(session,call.from_user.id,"fake_expedition_created" if fake else "war_expedition_launched",str(row.id))
             target=await session.get(Castle,row.target_castle_id)
         await state.clear()
