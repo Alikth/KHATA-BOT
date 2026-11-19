@@ -15,9 +15,18 @@ from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_me
 router = Router()
 
 def _is_admin_actor(user_id: int | None, chat, cfg) -> bool:
-    # Superuser identity is the Telegram numeric user ID, not the current chat.
-    # Group registration and castle ownership are checked independently.
-    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id)
+    # Admin access requires BOTH the configured owner account and the one
+    # explicitly configured administration group. Being the owner in a
+    # private chat or any castle/player group must never expose the admin UI.
+    return bool(
+        user_id
+        and cfg.bot_owner_id
+        and user_id == cfg.bot_owner_id
+        and chat
+        and chat.type in ("group", "supergroup")
+        and cfg.admin_chat_id
+        and chat.id == cfg.admin_chat_id
+    )
 
 async def _safe_edit_text(message, text: str, reply_markup=None):
     try:
