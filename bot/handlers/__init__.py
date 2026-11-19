@@ -14,10 +14,6 @@ from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_me
 
 router = Router()
 
-def _is_admin_chat(message: Message, cfg) -> bool:
-    return bool(message.chat and message.chat.type in ("group", "supergroup")
-                and cfg.admin_chat_id and message.chat.id == cfg.admin_chat_id)
-
 def _is_admin_actor(user_id: int | None, chat, cfg) -> bool:
     return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id
                 and chat and chat.type in ("group", "supergroup")
@@ -105,9 +101,10 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
     async with session_factory() as session:
         lord = await get_lord(session, call.from_user.id)
         if action in ("assets", "buildings", "camps", "army", "trade", "war") and not lord:
-            await call.message.edit_text(
+            await _safe_edit_text(
+                call.message,
                 "برای این حساب هنوز لرد فعالی ثبت نشده است. پس از اتصال حساب به قلعه، اطلاعات بازی از همین منو نمایش داده می‌شود.",
-                reply_markup=main_menu()
+                reply_markup=main_menu(),
             )
             return
         castle = await session.get(Castle, lord.castle_id) if lord else None
@@ -374,14 +371,6 @@ async def admin_menu_callback(call: CallbackQuery, session_factory):
     await call.answer("انجام شد")
 
 
-@router.message(Command("admin"))
-async def legacy_admin_command(message: Message):
-    cfg = get_settings()
-    if _is_admin_actor(message.from_user.id if message.from_user else None, message.chat, cfg):
-        await message.answer("برای ورود به مرکز فرماندهی، فقط /start را در همین گروه بزن.")
-    else:
-        await message.answer("این دستور فقط در گروه مدیریت و برای مالک اصلی فعال است.")
-
 async def admin_action(message: Message, session_factory, bot, paused: bool | None):
     cfg = get_settings()
     if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
@@ -401,7 +390,7 @@ async def admin_action(message: Message, session_factory, bot, paused: bool | No
 
 @router.message(Command("pause"))
 async def pause_world(message: Message, session_factory, bot):
-    if not await admin_action(message, session_factory, bot, True): await message.answer("ابتدا از گروه مدیریت و با کد معتبر وارد پنل شو.")
+    if not await admin_action(message, session_factory, bot, True): await message.answer("این فرمان فقط برای مالک اصلی در گروه مدیریت فعال است.")
 
 @router.message(Command("resume"))
 async def resume_world(message: Message, session_factory, bot):
