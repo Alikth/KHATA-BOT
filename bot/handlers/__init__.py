@@ -1,10 +1,8 @@
 from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select
-from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, VerificationError
-from time import monotonic
 from decimal import Decimal, InvalidOperation
 from html import escape
 from bot.config import get_settings
@@ -15,17 +13,22 @@ from bot.services import (get_lord, get_group, create_lord, create_castle_group,
 from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_menu
 
 router = Router()
-_admin_sessions: dict[int, float] = {}
-
-
 
 def _is_admin_chat(message: Message, cfg) -> bool:
-    """Allow the configured owner to administer from the private bot chat or admin group."""
-    if not message.chat:
-        return False
-    return message.chat.type == "private" or (
-        message.chat.type in ("group", "supergroup") and message.chat.id == cfg.admin_chat_id
-    )
+    return bool(message.chat and message.chat.type in ("group", "supergroup")
+                and cfg.admin_chat_id and message.chat.id == cfg.admin_chat_id)
+
+def _is_admin_actor(user_id: int | None, chat, cfg) -> bool:
+    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id
+                and chat and chat.type in ("group", "supergroup")
+                and cfg.admin_chat_id and chat.id == cfg.admin_chat_id)
+
+async def _safe_edit_text(message, text: str, reply_markup=None):
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
 
 async def publish_admin_audit(bot, actor_id: int, action: str, target: str = "", details: str = ""):
     """Send a concise audit notification to the configured admin/audit group."""
@@ -58,7 +61,19 @@ async def require_registered_group(message: Message, session):
 
 @router.message(CommandStart())
 async def start(message: Message):
-    await message.answer("به جهان KHATA-GAMES خوش آمدی. از منوی فارسی زیر بخش موردنظر را انتخاب کن. دستورات بازی در گروه اختصاصی قلعه اجرا می‌شوند.", reply_markup=main_menu(is_admin=bool(get_settings().bot_owner_id and message.from_user and message.from_user.id == get_settings().bot_owner_id)))
+    cfg = get_settings()
+    if _is_admin_actor(message.from_user.id if message.from_user else None, message.chat, cfg):
+        await message.answer(
+            "🔐 <b>مرکز فرماندهی KHATA-GAMES</b>\n"
+            "مالک اصلی شناسایی شد. مدیریت جهان از همین گروه و همین پنل انجام می‌شود.",
+            reply_markup=admin_menu(),
+        )
+        return
+    await message.answer(
+        "به جهان KHATA-GAMES خوش آمدی. از منوی فارسی زیر بخش موردنظر را انتخاب کن. "
+        "دستورات بازی در گروه اختصاصی قلعه اجرا می‌شوند.",
+        reply_markup=main_menu(),
+    )
 
 @router.message(Command("help"))
 async def help_cmd(message: Message, session_factory):
@@ -85,33 +100,14 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
 
     cfg = get_settings()
     if action == "back":
-        await call.message.edit_text(
-            "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.",
-            reply_markup=main_menu(is_admin=bool(cfg.bot_owner_id and call.from_user.id == cfg.bot_owner_id))
-        )
+        await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
         return
-    if action == "admin":
-        if not cfg.bot_owner_id or call.from_user.id != cfg.bot_owner_id:
-            await call.message.answer("دسترسی مجاز نیست.")
-            return
-        if _admin_sessions.get(call.from_user.id, 0) < monotonic():
-            await call.message.answer("برای ورود امن، در گفت‌وگوی خصوصی ربات دستور /admin کد را ارسال کن.")
-            return
-        async with session_factory() as session:
-            paused = await is_world_paused(session)
-        await call.message.edit_text(
-            "🔐 پنل سوپرادمین KHATA-GAMES\n"
-            + f"وضعیت جهان: {'متوقف' if paused else 'فعال'}",
-            reply_markup=admin_menu()
-        )
-        return
-
     async with session_factory() as session:
         lord = await get_lord(session, call.from_user.id)
         if action in ("assets", "buildings", "camps", "army", "trade", "war") and not lord:
             await call.message.edit_text(
                 "برای این حساب هنوز لرد فعالی ثبت نشده است. پس از اتصال حساب به قلعه، اطلاعات بازی از همین منو نمایش داده می‌شود.",
-                reply_markup=main_menu(is_admin=bool(cfg.bot_owner_id and call.from_user.id == cfg.bot_owner_id))
+                reply_markup=main_menu()
             )
             return
         castle = await session.get(Castle, lord.castle_id) if lord else None
@@ -195,10 +191,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         else:
             body = "بخش درخواستی در دسترس نیست."
 
-    await call.message.edit_text(
-        body,
-        reply_markup=section_back_menu(is_admin=bool(cfg.bot_owner_id and call.from_user.id == cfg.bot_owner_id))
-    )
+    await _safe_edit_text(call.message, body, reply_markup=section_back_menu())
 
 @router.message(F.text.regexp(r"(?i)^set lord$"))
 async def set_lord_reply(message: Message, session_factory):
@@ -318,64 +311,80 @@ async def trade_callback(call: CallbackQuery, bot, session_factory):
 @router.callback_query(F.data.startswith("admin:"))
 async def admin_menu_callback(call: CallbackQuery, session_factory):
     cfg = get_settings()
-    if not call.from_user or not cfg.bot_owner_id or call.from_user.id != cfg.bot_owner_id:
-        await call.answer("دسترسی سوپرادمین مجاز نیست.", show_alert=True)
-        return
-    if not call.message or _admin_sessions.get(call.from_user.id, 0) < monotonic():
-        await call.answer("نشست مدیریت منقضی شده است؛ دوباره وارد پنل شو.", show_alert=True)
+    if not call.message or not _is_admin_actor(call.from_user.id if call.from_user else None, call.message.chat, cfg):
+        await call.answer("فقط مالک اصلی در گروه مدیریت اجازه این کار را دارد.", show_alert=True)
         return
     action = call.data.split(":", 1)[1]
-    if action not in ("pause", "resume", "status"):
+    allowed = {"pause", "resume", "status", "castles", "lords", "wars", "trades", "scenarios", "logs", "commands"}
+    if action not in allowed:
         await call.answer("عملیات نامعتبر است.", show_alert=True)
         return
-    if action == "status":
-        async with session_factory() as session:
-            paused = await is_world_paused(session)
-        await call.message.edit_text(
-            f"📊 وضعیت جهان: {'متوقف' if paused else 'فعال'}",
-            reply_markup=admin_menu()
-        )
-    else:
+    if action in {"pause", "resume"}:
         paused = action == "pause"
         async with session_factory() as session, session.begin():
             await set_world_paused(session, paused)
             await audit(session, call.from_user.id, "world_paused" if paused else "world_resumed")
-        await publish_admin_audit(
-            call.bot, call.from_user.id,
-            "world_paused" if paused else "world_resumed",
-            "world", "تغییر وضعیت ساعت جهان از منوی شیشه‌ای"
-        )
-        await call.message.edit_text(
-            "⏸ ساعت جهان متوقف شد." if paused else "▶️ ساعت جهان ادامه یافت.",
-            reply_markup=admin_menu()
-        )
+        await publish_admin_audit(call.bot, call.from_user.id, "world_paused" if paused else "world_resumed", "world", "کنترل ساعت جهان از پنل")
+        body = "⏸ ساعت جهان متوقف شد." if paused else "▶️ ساعت جهان ادامه یافت."
+    else:
+        async with session_factory() as session:
+            if action == "status":
+                paused = await is_world_paused(session)
+                from bot.database.models import WarExpedition
+                from sqlalchemy import func
+                states = ("prepared", "travelling", "arrived", "resolving", "returning", "completed", "cancelled", "failed")
+                counts = []
+                for state in states:
+                    count = await session.scalar(select(func.count()).select_from(WarExpedition).where(WarExpedition.status == state))
+                    counts.append(f"{state}: {count or 0}")
+                body = f"📊 <b>وضعیت جهان</b>\nساعت جهان: {'متوقف' if paused else 'فعال'}\n" + "\n".join(counts)
+            elif action == "castles":
+                rows = (await session.scalars(select(Castle).order_by(Castle.region, Castle.name).limit(80))).all()
+                body = "🏰 <b>قلعه‌ها</b>\n" + ("\n".join(f"#{x.id} {escape(x.name)} | {escape(x.region)} | {escape(x.house)} | {'فعال' if x.active else 'غیرفعال'}" for x in rows) or "قلعه‌ای ثبت نشده است.")
+            elif action == "lords":
+                rows = (await session.scalars(select(Lord).order_by(Lord.id.desc()).limit(80))).all()
+                body = "👑 <b>لردها</b>\n" + ("\n".join(f"#{x.id} {escape(x.display_name)} | تلگرام <code>{x.telegram_user_id}</code> | قلعه {x.castle_id} | {x.status}" for x in rows) or "لردی ثبت نشده است.")
+            elif action == "wars":
+                from bot.database.models import WarExpedition
+                rows = (await session.scalars(select(WarExpedition).order_by(WarExpedition.id.desc()).limit(30))).all()
+                body = "⚔️ <b>لشکرکشی‌ها</b>\n" + ("\n".join(f"#{x.id} | {x.origin_castle_id} → {x.target_castle_id} | {x.status} | {x.outcome or '-'}" for x in rows) or "لشکرکشی‌ای ثبت نشده است.")
+            elif action == "trades":
+                rows = (await session.scalars(select(TradeOffer).order_by(TradeOffer.id.desc()).limit(30))).all()
+                body = "🤝 <b>معاملات</b>\n" + ("\n".join(f"#{x.id} | {x.sender_lord_id} → {x.recipient_lord_id} | {x.status}" for x in rows) or "معامله‌ای ثبت نشده است.")
+            elif action == "scenarios":
+                rows = (await session.scalars(select(WarScenario).where(WarScenario.reviewed.is_(False)).order_by(WarScenario.created_at).limit(20))).all()
+                body = "📜 <b>سناریوهای بررسی‌نشده</b>\n" + ("\n".join(f"#{x.id} | نبرد #{x.expedition_id} | لرد #{x.lord_id}\n{escape(x.scenario_text[:450])}" for x in rows) or "سناریوی بررسی‌نشده‌ای وجود ندارد.")
+            elif action == "logs":
+                rows = (await session.scalars(select(AdminAuditLog).order_by(AdminAuditLog.id.desc()).limit(20))).all()
+                body = "🧾 <b>گزارش عملیات</b>\n" + ("\n".join(f"#{x.id} | {x.actor_telegram_id} | {escape(x.action)} | {escape(x.target_id or '-')}" for x in rows) or "گزارشی ثبت نشده است.")
+            else:
+                body = ("🛠 <b>فرمان‌های مدیریتی</b>\n"
+                    "/registercastle نام | منطقه | خاندان — ثبت گروه قلعه\n"
+                    "Reply به پیام بازیکن + set lord — تعیین لرد\n"
+                    "/setresource شناسه منبع مقدار — تغییر منابع\n"
+                    "/setasset شناسه_قلعه نوع کلید مقدار — تغییر دارایی\n"
+                    "/setlordcastle شناسه_تلگرام شناسه_قلعه — انتقال لرد\n"
+                    "/setcastleinfo شناسه نام | منطقه | خاندان — ویرایش قلعه\n"
+                    "/setlordstatus شناسه active|suspended|deleted — وضعیت لرد\n"
+                    "/admincastles /adminwars /admintrades /adminscenarios /adminlogs\n"
+                    "/warresolve شناسه attacker|defender JSON — نتیجه نبرد\n"
+                    "/reviewscenario شناسه نتیجه — بررسی سناریو\n"
+                    "/canceltrade شناسه — لغو معامله")
+    await _safe_edit_text(call.message, body, reply_markup=admin_menu())
     await call.answer("انجام شد")
 
 
 @router.message(Command("admin"))
-async def admin_panel(message: Message, session_factory):
+async def legacy_admin_command(message: Message):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg):
-        await message.answer("دسترسی مجاز نیست."); return
-    code = (message.text or "").partition(" ")[2].strip()
-    try:
-        if not code or not cfg.admin_password_hash:
-            raise VerifyMismatchError
-        PasswordHasher().verify(cfg.admin_password_hash, code)
-    except (VerifyMismatchError, VerificationError, Exception):
-        try: await message.delete()
-        except Exception: pass
-        await message.answer("کد دسترسی نامعتبر است یا تنظیم نشده."); return
-    try: await message.delete()
-    except Exception: pass
-    _admin_sessions[message.from_user.id] = monotonic() + (cfg.admin_session_minutes * 60)
-    async with session_factory() as session:
-        paused = await is_world_paused(session)
-    await message.answer("🔐 پنل مدیریت KHATA-GAMES\n" + f"ساعت جهان: {'متوقف' if paused else 'فعال'}\n\n/pause — توقف جهان\n/resume — ادامه جهان\n/status — وضعیت جهان")
+    if _is_admin_actor(message.from_user.id if message.from_user else None, message.chat, cfg):
+        await message.answer("برای ورود به مرکز فرماندهی، فقط /start را در همین گروه بزن.")
+    else:
+        await message.answer("این دستور فقط در گروه مدیریت و برای مالک اصلی فعال است.")
 
 async def admin_action(message: Message, session_factory, bot, paused: bool | None):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or (_admin_sessions.get(message.from_user.id, 0) < monotonic()):
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         return False
     if paused is not None:
         async with session_factory() as session, session.begin():
@@ -662,7 +671,7 @@ async def transfer_response_cmd(message: Message, session_factory):
 @router.message(Command("warresolve"))
 async def war_resolve_admin_cmd(message: Message, session_factory, bot):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("این دستور فقط برای مالک اصلی با نشست مدیریتی فعال است.");return
     # /warresolve ID attacker|defender attacker:swordsman=10,archer=2 defender:spearman=5
     p=(message.text or "").split(maxsplit=3)
@@ -713,7 +722,7 @@ async def trade_pack_cmd(message: Message, bot, session_factory):
 @router.message(Command("adminscenarios"))
 async def admin_scenarios_cmd(message: Message, session_factory):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(WarScenario).where(WarScenario.reviewed.is_(False)).order_by(WarScenario.created_at).limit(30))).all()
@@ -723,7 +732,7 @@ async def admin_scenarios_cmd(message: Message, session_factory):
 @router.message(Command("reviewscenario"))
 async def review_scenario_cmd(message: Message, session_factory, bot):
     cfg=get_settings();p=(message.text or "").split(maxsplit=2)
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     if len(p)<3: await message.answer("فرمت: /reviewscenario شناسه نتیجه بررسی");return
     async with session_factory() as session,session.begin():
@@ -752,7 +761,7 @@ async def cancel_march_cmd(message: Message, session_factory):
 @router.message(Command("adminwars"))
 async def admin_wars_cmd(message: Message, session_factory):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(WarExpedition).order_by(WarExpedition.id.desc()).limit(30))).all()
@@ -764,7 +773,7 @@ async def admin_wars_cmd(message: Message, session_factory):
 @router.message(Command("admincastles"))
 async def admin_castles_cmd(message: Message, session_factory):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(Castle).order_by(Castle.region,Castle.name))).all()
@@ -818,7 +827,7 @@ async def march_garrison_cmd(message: Message, session_factory, bot):
 @router.message(Command("admintrades"))
 async def admin_trades_cmd(message: Message, session_factory):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(TradeOffer).order_by(TradeOffer.id.desc()).limit(30))).all()
@@ -834,7 +843,7 @@ async def admin_trades_cmd(message: Message, session_factory):
 @router.message(Command("adminhelp"))
 async def admin_help_cmd(message: Message):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("ابتدا با /admin و کد معتبر وارد پنل شو.")
         return
     await message.answer(
@@ -854,7 +863,7 @@ async def admin_help_cmd(message: Message):
 @router.message(Command("setresource"))
 async def admin_set_resource_cmd(message: Message, session_factory, bot):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی سوپرادمین فعال نیست.")
         return
     parts = (message.text or "").split()
@@ -888,7 +897,7 @@ async def admin_set_resource_cmd(message: Message, session_factory, bot):
 @router.message(Command("adminlogs"))
 async def admin_logs_cmd(message: Message, session_factory):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی سوپرادمین فعال نیست.")
         return
     async with session_factory() as session:
@@ -906,7 +915,7 @@ async def admin_logs_cmd(message: Message, session_factory):
 @router.message(Command("setasset"))
 async def admin_set_asset_cmd(message: Message, session_factory, bot):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی سوپرادمین فعال نیست.")
         return
     parts = (message.text or "").split()
@@ -950,7 +959,7 @@ async def admin_set_asset_cmd(message: Message, session_factory, bot):
 @router.message(Command("setlordcastle"))
 async def admin_set_lord_castle_cmd(message: Message, session_factory, bot):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی سوپرادمین فعال نیست.")
         return
     parts = (message.text or "").split()
@@ -980,7 +989,7 @@ async def admin_set_lord_castle_cmd(message: Message, session_factory, bot):
 @router.message(Command("setcastleinfo"))
 async def admin_set_castle_info_cmd(message: Message, session_factory, bot):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی سوپرادمین فعال نیست.")
         return
     raw = (message.text or "").partition(" ")[2]
@@ -1012,7 +1021,7 @@ async def admin_set_castle_info_cmd(message: Message, session_factory, bot):
 @router.message(Command("setlordstatus"))
 async def admin_set_lord_status_cmd(message: Message, session_factory, bot):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی سوپرادمین فعال نیست.")
         return
     parts = (message.text or "").split()
@@ -1036,7 +1045,7 @@ async def admin_set_lord_status_cmd(message: Message, session_factory, bot):
 @router.message(Command("canceltrade"))
 async def admin_cancel_trade_cmd(message: Message, session_factory, bot):
     cfg = get_settings()
-    if not message.from_user or message.from_user.id != cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id, 0) < monotonic():
+    if not message.from_user or not _is_admin_actor(message.from_user.id, message.chat, cfg):
         await message.answer("دسترسی سوپرادمین فعال نیست.")
         return
     parts = (message.text or "").split()
