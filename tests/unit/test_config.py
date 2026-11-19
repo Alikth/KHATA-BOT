@@ -32,3 +32,8 @@ def test_site_integration_settings_are_optional_and_configurable():
     assert settings.site_api_url.endswith("workers.dev")
     assert settings.site_api_secret == "test-secret"
     assert settings.site_api_timeout_seconds == 20
+
+
+def test_telegram_proxy_is_optional_and_configurable():
+    settings = Settings(telegram_proxy="http://127.0.0.1:2080", _env_file=None)
+    assert settings.telegram_proxy == "http://127.0.0.1:2080"
