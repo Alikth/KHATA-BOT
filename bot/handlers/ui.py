@@ -492,7 +492,7 @@ async def scenario_input(message:Message,state:FSMContext,session_factory):
 
 
 @router.message(UIFlow.roll_text)
-async def roll_input(message:Message,state:FSMContext,session_factory):
+async def roll_input(message:Message,state:FSMContext,session_factory,bot):
     raw=(message.text or "").strip()
     if not raw or len(raw)>4000: await message.answer("متن رول باید بین ۱ تا ۴۰۰۰ نویسه باشد.");return
     try:
@@ -513,6 +513,9 @@ async def roll_input(message:Message,state:FSMContext,session_factory):
             else: session.add(GameSetting(key="roll_submissions",value=values))
             await audit(session,message.from_user.id,"lord_roll_submitted",str(lord.id))
         await state.clear(); await message.answer("🎲 رول ثبت شد.")
+        destination=get_settings().admin_audit_chat_id or get_settings().admin_chat_id
+        if destination:
+            await bot.send_message(destination,f"🎲 <b>رول جدید</b>\nلرد: {escape(lord.display_name)}\nقلعه: {escape(castle.name)}\nمتن: {escape(raw)}")
     except ValueError as exc: await message.answer(str(exc))
 
 
