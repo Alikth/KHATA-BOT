@@ -217,13 +217,16 @@ async def review_battle(session: AsyncSession, expedition_id: int, outcome: str,
 
 async def answer_alliance(session: AsyncSession, alliance_id: int, lord: Lord, accept: bool):
     row=await session.scalar(select(MilitaryAlliance).where(MilitaryAlliance.id==alliance_id).with_for_update())
-    if not row or row.owner_b_lord_id!=lord.id or row.status!="pending":
+    if not row or row.status!="pending":
         raise ValueError("درخواست اتحاد در دسترس نیست.")
     expedition=await session.scalar(
         select(WarExpedition).where(WarExpedition.id==row.war_expedition_id).with_for_update()
     ) if row.war_expedition_id else None
     if not expedition or expedition.status!="resolving":
         raise ValueError("لشکر مرتبط با درخواست اتحاد پیدا نشد یا وضعیت آن معتبر نیست.")
+    target_owner_id = row.owner_a_lord_id if row.castle_a_id == expedition.target_castle_id else row.owner_b_lord_id
+    if target_owner_id != lord.id:
+        raise ValueError("فقط لرد قلعه مقصد می‌تواند به درخواست اتحاد پاسخ دهد.")
     row.status="accepted" if accept else "rejected"
     row.responded_at=datetime.now(timezone.utc)
     if accept:
