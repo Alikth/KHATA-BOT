@@ -128,7 +128,7 @@ async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram
         if not offered or not requested:
             raise ValueError("سبد هر دو طرف معامله باید حداقل یک دارایی داشته باشد.")
         ids = sorted([offer.sender_lord_id, offer.recipient_lord_id])
-        rows = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_(ids)).with_for_update())).all()
+        rows = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_(ids)).order_by(ResourceBalance.lord_id, ResourceBalance.resource_code).with_for_update())).all()
         lookup = {(r.lord_id, r.resource_code): r for r in rows}
         for code, amount in offered.items():
             amount=int(amount); row=lookup.get((offer.sender_lord_id,code))
