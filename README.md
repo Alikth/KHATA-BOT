@@ -16,8 +16,7 @@
 2. `scripts\setup_windows.bat` را اجرا کنید.
 3. از `.env.example` یک فایل `.env` بسازید.
 4. `BOT_TOKEN`، `BOT_OWNER_ID`، `ADMIN_CHAT_ID` و `DATABASE_URL` را تنظیم کنید.
-5. برای ساخت هش کد مدیریت اجرا کنید: `py scripts\create_admin_hash.py` و مقدار چاپ‌شده را در `ADMIN_PASSWORD_HASH` قرار دهید.
-6. ربات را با `START-BOT.bat` اجرا کنید.
+5. ربات را با `START-BOT.bat` اجرا کنید.
 
 ## ثبت گروه قلعه
 ربات را به گروه اضافه کنید و مالک اصلی در همان گروه اجرا کند:
