@@ -138,6 +138,10 @@ async def resolve_trade(session: AsyncSession, offer_id: int, recipient_telegram
     recipient = await get_lord(session, recipient_telegram_id)
     if not recipient or recipient.id != offer.recipient_lord_id:
         raise ValueError("این پیشنهاد متعلق به تو نیست.")
+    if accept:
+        from bot.game.controls import get_controls
+        if not (await get_controls(session))["trades_open"]:
+            raise ValueError("پذیرش معاملات توسط مدیریت قفل شده است.")
     if not accept:
         offer.status = "rejected"
         return offer
