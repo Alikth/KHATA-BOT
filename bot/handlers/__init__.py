@@ -6,7 +6,7 @@ from sqlalchemy import select
 from decimal import Decimal, InvalidOperation
 from html import escape
 from bot.config import get_settings
-from bot.database.models import Lord, TradeOffer, Castle, ResourceBalance, AdminAuditLog
+from bot.database.models import Lord, TradeOffer, Castle, ResourceBalance, AdminAuditLog, GroupRegistration
 from bot.services import (get_lord, get_group, create_lord, create_castle_group, get_balances,
                           create_trade, resolve_trade, cancel_trade, audit, is_world_paused, set_world_paused,
                           RESOURCE_NAMES)
