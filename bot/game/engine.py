@@ -204,14 +204,14 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
     """Settle one world week once per castle using the website's production/upkeep formula."""
     settled_debts = await settle_expired_food_debts(session)
     state=await session.get(GameState,"world")
-    if state and state.value.get("paused",True): return {"paused":True,"processed":0,"food_debts_settled":settled_debts}
+    if state and state.value.get("paused",True) and not force: return {"paused":True,"processed":0,"food_debts_settled":settled_debts}
     now=await advance_world_clock(session)
     week=f"{now.isocalendar().year}-W{now.isocalendar().week:02d}"
     castles=(await session.scalars(select(Castle).where(Castle.active.is_(True)))).all(); processed=0
     for castle in castles:
         econ=await session.get(CastleEconomyState,castle.id)
         if not econ: continue
-        if not force and econ.last_week_key==week: continue
+        if econ.last_week_key==week: continue
         lords=(await session.scalars(select(Lord).where(Lord.castle_id==castle.id,Lord.status=="active"))).all()
         if not lords: econ.last_week_key=week; continue
         lord=lords[0]; changes={}
