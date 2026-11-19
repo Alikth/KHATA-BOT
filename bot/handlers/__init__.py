@@ -98,161 +98,22 @@ async def help_cmd(message: Message, session_factory):
 
 @router.callback_query(F.data.startswith("menu:"))
 async def persian_menu_callback(call: CallbackQuery, session_factory):
-    """Render real player data from inline navigation; no command text is emitted."""
-    action = call.data.split(":", 1)[1]
+    """Render the interactive player UI; admin callbacks are handled separately."""
+    action = (call.data or "").split(":", 1)[1]
     if not call.from_user or not call.message:
         await call.answer()
         return
-
-    cfg = get_settings()
     if action == "back":
         await call.answer()
-        await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
+        await _safe_edit_text(
+            call.message,
+            "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.",
+            reply_markup=main_menu(),
+        )
         return
     from bot.handlers.ui import render_player_section
     await render_player_section(call, session_factory, action)
-    return
-    async with session_factory() as session, session.begin():
-        lord = await get_lord(session, call.from_user.id)
-        if action in ("assets", "buildings", "camps", "army", "trade", "war"):
-            group = await get_group(session, call.message.chat.id)
-            if not lord:
-                await _safe_edit_text(
-                    call.message,
-                    "برای این حساب هنوز لرد فعالی ثبت نشده است. پس از تعیین لرد توسط مالک اصلی، اطلاعات بازی نمایش داده می‌شود.",
-                    reply_markup=main_menu(),
-                )
-                return
-            if not group or lord.castle_id != group.castle_id:
-                await _safe_edit_text(
-                    call.message,
-                    "این منو فقط در گروه قلعه‌ای که لرد به آن اختصاص داده شده قابل استفاده است.",
-                    reply_markup=main_menu(),
-                )
-                return
-        castle = await session.get(Castle, lord.castle_id) if lord else None
-        reply_markup = section_back_menu()
 
-        if action == "assets":
-            from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState
-            balances = await get_balances(session, lord.id)
-            production = (await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id==lord.castle_id).order_by(ProductionLevel.production_key))).all()
-            camps = (await session.scalars(select(CampLevel).where(CampLevel.castle_id==lord.castle_id).order_by(CampLevel.camp_key))).all()
-            special_camps = (await session.scalars(select(SpecialCampLevel).where(SpecialCampLevel.castle_id==lord.castle_id).order_by(SpecialCampLevel.camp_key))).all()
-            army = (await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id==lord.castle_id).order_by(ArmyUnit.unit_key))).all()
-            equipment = (await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id==lord.castle_id).order_by(EquipmentItem.item_key))).all()
-            fleet = (await session.scalars(select(FleetShip).where(FleetShip.castle_id==lord.castle_id).order_by(FleetShip.ship_key))).all()
-            economy = await session.get(CastleEconomyState, lord.castle_id)
-            lines = [f"👑 پروفایل {escape(lord.display_name)}", f"🏰 {escape(castle.name) if castle else 'قلعه نامشخص'}", "", "📦 منابع"]
-            lines.extend(f"{RESOURCE_NAMES.get(key, key)}: {value:,.0f}" for key, value in balances.items())
-            lines.append("\n🏗 ساختمان‌های تولید")
-            for row in production:
-                definition = GENERAL_PRODUCTIONS.get(row.production_key) or (SPECIAL_PRODUCTIONS.get(castle.region) if castle and SPECIAL_PRODUCTIONS.get(castle.region,{}).get("key")==row.production_key else None)
-                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-            lines.append("\n🏕 کمپ‌ها")
-            for row in camps:
-                definition = GENERAL_CAMPS.get(row.camp_key)
-                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-            for row in special_camps:
-                definition = next((x for x in SPECIAL_CAMPS.get(castle.region,[]) if x["key"]==row.camp_key),None) if castle else None
-                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-            lines.append("\n⚔️ ارتش")
-            lines.extend(f"{row.unit_key}: {row.count:,}" for row in army)
-            lines.append("\n🛠 تجهیزات")
-            lines.extend(f"{row.item_key}: {row.count:,}" for row in equipment)
-            lines.append("\n🚢 ناوگان")
-            lines.extend(f"{row.ship_key}: {row.count:,}" for row in fleet)
-            if economy and economy.food_debt:
-                lines.append(f"\n⚠️ بدهی غذا: {economy.food_debt:,}")
-                if economy.food_debt_due_at: lines.append(f"مهلت: {economy.food_debt_due_at:%Y-%m-%d %H:%M UTC}")
-            if economy:
-                lines.append(f"کارگاه: سطح {economy.workshop_level} | بندر: {'فعال' if economy.port_enabled else 'غیرفعال'} (سطح {economy.port_level})")
-            body = "\n".join(lines)
-        elif action in ("buildings", "camps"):
-            from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel
-            from bot.game.engine import GENERAL_PRODUCTIONS, SPECIAL_PRODUCTIONS, GENERAL_CAMPS, SPECIAL_CAMPS
-            productions = (await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id == lord.castle_id).order_by(ProductionLevel.production_key))).all()
-            camps = (await session.scalars(select(CampLevel).where(CampLevel.castle_id == lord.castle_id).order_by(CampLevel.camp_key))).all()
-            special = (await session.scalars(select(SpecialCampLevel).where(SpecialCampLevel.castle_id == lord.castle_id).order_by(SpecialCampLevel.camp_key))).all()
-            lines = [f"🏰 {escape(castle.name) if castle else 'قلعه'}"]
-            if action == "buildings":
-                lines.append("🏗 ساختمان‌های تولید")
-                buttons = []
-                for row in productions:
-                    definition = GENERAL_PRODUCTIONS.get(row.production_key)
-                    if not definition:
-                        candidate = SPECIAL_PRODUCTIONS.get(castle.region, {}) if castle else {}
-                        definition = candidate if candidate.get("key") == row.production_key else None
-                    if definition:
-                        lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-                        if row.level < int(definition["max"]):
-                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:production:{row.production_key}")])
-                reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons + [[InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")]])
-            if action == "camps":
-                lines.append("⚔️ کمپ‌ها")
-                buttons = []
-                for row in camps:
-                    definition = GENERAL_CAMPS.get(row.camp_key)
-                    if definition:
-                        lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-                        if row.level < int(definition["max"]):
-                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:camp:{row.camp_key}")])
-                for row in special:
-                    definitions = SPECIAL_CAMPS.get(castle.region, []) if castle else []
-                    definition = next((item for item in definitions if item["key"] == row.camp_key), None)
-                    if definition:
-                        lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-                        if row.level < int(definition["max"]):
-                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:special_camp:{row.camp_key}")])
-                reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons + [[InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")]])
-            body = "\n".join(lines)
-        elif action == "army":
-            from bot.database.models import ArmyUnit, EquipmentItem, FleetShip
-            army = (await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id == lord.castle_id).order_by(ArmyUnit.unit_key))).all()
-            equipment = (await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id == lord.castle_id).order_by(EquipmentItem.item_key))).all()
-            fleet = (await session.scalars(select(FleetShip).where(FleetShip.castle_id == lord.castle_id).order_by(FleetShip.ship_key))).all()
-            lines = [f"🛡 ارتش {castle.name if castle else ''}", "نیروها:"]
-            lines.extend(f"{row.unit_key}: {row.count:,}" for row in army)
-            lines.append("ادوات:")
-            lines.extend(f"{row.item_key}: {row.count:,}" for row in equipment)
-            lines.append("ناوگان:")
-            lines.extend(f"{row.ship_key}: {row.count:,}" for row in fleet)
-            body = "\n".join(lines)
-        elif action == "trade":
-            rows = (await session.scalars(select(TradeOffer).where(
-                (TradeOffer.recipient_lord_id == lord.id) & (TradeOffer.status == "pending")
-            ).order_by(TradeOffer.id.desc()).limit(10))).all()
-            body = "🤝 پیشنهادهای تجاری دریافتی"
-            if not rows:
-                body += "\nدر حال حاضر پیشنهاد معلقی نداری."
-            else:
-                for offer in rows:
-                    offered = offer.offered_assets or {offer.offered_resource: offer.offered_amount}
-                    requested = offer.requested_assets or {offer.requested_resource: offer.requested_amount}
-                    await call.message.answer(
-                        f"پیشنهاد #{offer.id}\nدریافت: {offered}\nپرداخت: {requested}",
-                        reply_markup=trade_decision(offer.id)
-                    )
-                body = "پیشنهادهای فعال با دکمه پذیرش/رد در پیام‌های بالا نمایش داده شدند."
-        elif action == "war":
-            from bot.database.models import WarExpedition
-            rows = (await session.scalars(select(WarExpedition).where(
-                WarExpedition.attacker_lord_id == lord.id
-            ).order_by(WarExpedition.id.desc()).limit(10))).all()
-            body = "🚩 آخرین لشکرکشی‌ها"
-            if rows:
-                body += "\n" + "\n".join(
-                    f"#{row.id} | مقصد قلعه {row.target_castle_id} | {row.status} | رسیدن: {row.arrival_at:%Y-%m-%d %H:%M}"
-                    for row in rows
-                )
-            else:
-                body += "\nهنوز لشکرکشی ثبت نشده است."
-        elif action == "help":
-            body = "ℹ️ راهنمای بازی\nاز دکمه‌های منو برای مشاهده پروفایل، ساختمان‌ها، کمپ‌ها، ارتش، تجارت و لشکرکشی استفاده کن. هر بخش اطلاعات واقعی قلعه و حساب متصل را نمایش می‌دهد."
-        else:
-            body = "بخش درخواستی در دسترس نیست."
-
-    await _safe_edit_text(call.message, body, reply_markup=reply_markup)
 
 @router.message(F.text.regexp(r"(?i)^set lord$"))
 async def set_lord_reply(message: Message, session_factory):
