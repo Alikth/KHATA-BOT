@@ -114,6 +114,7 @@ class WarExpedition(Base):
     outcome: Mapped[str | None] = mapped_column(String(16))
     casualties: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     lord_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    return_after_arrival: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
