@@ -11,6 +11,7 @@ from bot.services import (get_lord, get_group, create_lord, create_castle_group,
                           create_trade, resolve_trade, audit, is_world_paused, set_world_paused,
                           RESOURCE_NAMES)
 from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_menu
+from bot.integrations.site_api import SiteApiError
 
 router = Router()
 
@@ -249,7 +250,15 @@ async def set_lord_reply(message: Message, session_factory):
                 await sync_snapshot_to_postgres(session, lord, snapshot)
             await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id), f"castle_id={group.castle_id}; chat_id={message.chat.id}")
             castle = await session.get(Castle, group.castle_id)
-        except ValueError as exc:
+        except (ValueError, SiteApiError) as exc:
+            await session.rollback()
+            try:
+                from bot.integrations.site_api import revoke_lord_on_site
+                if "target" in locals():
+                    await revoke_lord_on_site(target.id)
+            except SiteApiError:
+                import logging
+                logging.exception("Could not roll back website lord assignment")
             await message.answer(str(exc)); return
     await message.answer(f"✅ لرد با موفقیت انتخاب شد.\n🏰 قلعه: {castle.name}\n👑 لرد: {target.full_name}")
 
