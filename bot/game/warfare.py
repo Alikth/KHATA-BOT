@@ -171,8 +171,14 @@ async def review_battle(session: AsyncSession, expedition_id: int, outcome: str,
     defender=await session.scalar(select(Lord).where(Lord.castle_id==row.target_castle_id,Lord.status=="active"))
     if not defender: raise ValueError("لرد مدافع پیدا نشد.")
     snapshot=row.assets or row.units
+    if not isinstance(attacker_losses, dict) or not isinstance(defender_losses, dict):
+        raise ValueError("ساختار گزارش تلفات معتبر نیست.")
     # Site allows attacker losses for army/equipment/fleet, while defender losses are army units.
     normalized={k:(v if isinstance(v,dict) else {"army":v}) for k,v in attacker_losses.items()}
+    if set(normalized) - {"army", "equipment", "fleet"}:
+        raise ValueError("نوع دارایی مهاجم در گزارش تلفات نامعتبر است.")
+    if any(not isinstance(v, dict) for v in normalized.values()):
+        raise ValueError("ساختار تلفات هر نوع دارایی باید فهرست کلید و تعداد باشد.")
     for kind in ("army","equipment","fleet"):
         losses=normalized.get(kind,{})
         brought=snapshot.get(kind,{})
@@ -236,8 +242,10 @@ async def answer_alliance(session: AsyncSession, alliance_id: int, lord: Lord, a
 async def answer_transfer(session: AsyncSession, request_id: int, lord: Lord, accept: bool):
     row=await session.scalar(select(TroopTransferRequest).where(TroopTransferRequest.id==request_id).with_for_update())
     if not row or row.receiver_lord_id!=lord.id or row.status!="pending": raise ValueError("درخواست انتقال پیدا نشد.")
+    expedition=await session.scalar(select(WarExpedition).where(WarExpedition.id==row.expedition_id).with_for_update())
+    if not expedition or expedition.status!="resolving":
+        raise ValueError("وضعیت لشکر با درخواست انتقال سازگار نیست.")
     row.status="accepted" if accept else "rejected";row.responded_at=datetime.now(timezone.utc)
-    expedition=await session.get(WarExpedition,row.expedition_id)
     if accept:
         for kind,items in row.assets.items():
             for key,n in items.items():
