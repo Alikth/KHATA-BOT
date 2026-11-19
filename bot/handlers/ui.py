@@ -547,14 +547,28 @@ async def admin_ui(call:CallbackQuery,session_factory,state:FSMContext,bot):
             await call.answer();return
         if action[0]=="rollback" and len(action)==2:
             offer_id=int(action[1])
+            async with session_factory() as session:
+                offer=await session.get(TradeOffer,offer_id)
+                if not offer or offer.status!="completed": raise ValueError("فقط معامله تکمیل‌شده را می‌توان برگرداند.")
+                sender=await session.get(Lord,offer.sender_lord_id)
+                recipient=await session.get(Lord,offer.recipient_lord_id)
+            kb=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚠️ تأیید بازگردانی",callback_data=f"adminui:rollbackconfirm:{offer_id}")],
+                [InlineKeyboardButton(text="انصراف",callback_data="adminui:trades")]])
+            await call.message.edit_text(
+                f"بازگردانی معامله #{offer_id}؟\\n{sender.display_name} ↔ {recipient.display_name}\\nاین کار موجودی دو طرف را معکوس می‌کند و فقط در صورت کافی بودن موجودی فعلی انجام می‌شود.",
+                reply_markup=kb)
+            await call.answer();return
+        if action[0]=="rollbackconfirm" and len(action)==2:
+            offer_id=int(action[1])
             async with session_factory() as session,session.begin():
                 offer=await session.scalar(select(TradeOffer).where(TradeOffer.id==offer_id).with_for_update())
                 if not offer or offer.status!="completed": raise ValueError("فقط معامله تکمیل‌شده را می‌توان برگرداند.")
                 sender=await session.get(Lord,offer.sender_lord_id); recipient=await session.get(Lord,offer.recipient_lord_id)
                 offered=offer.offered_assets or {offer.offered_resource:offer.offered_amount}
                 requested=offer.requested_assets or {offer.requested_resource:offer.requested_amount}
-                ids=[sender.id,recipient.id]
-                rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_(ids)).with_for_update())).all()
+                ids=sorted([sender.id,recipient.id])
+                rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id.in_(ids)).order_by(ResourceBalance.lord_id,ResourceBalance.resource_code).with_for_update())).all()
                 lookup={(r.lord_id,r.resource_code):r for r in rows}
                 for code,amount in offered.items():
                     src=lookup.get((recipient.id,code)); dst=lookup.get((sender.id,code)); n=Decimal(str(amount))
