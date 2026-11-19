@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     starting_stone: int = 500
     starting_food: int = 1000
     admin_chat_id: int = 0
+    admin_audit_chat_id: int | None = None
     admin_session_minutes: int = 20
 
 @lru_cache
