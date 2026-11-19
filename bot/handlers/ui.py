@@ -60,6 +60,19 @@ def _back():
     return section_back_menu()
 
 
+ARMY_LABELS = {
+    "archer": "🏹 کماندار", "cavalry": "🏇 سواره‌نظام",
+    "spearman": "🔱 نیزه‌دار", "swordsman": "🗡 شمشیرزن",
+    "ranger": "🥷 رنجر", "winter_soldier": "🐺 سرباز زمستان",
+    "vale_knight": "⚔️ شوالیه ویل", "crossbowman": "🏹 کراسبو‌دار",
+    "red_cloak": "🩸 ردا سرخ", "dragon_knight": "🐉 شوالیه اژدها",
+    "axeman": "🪓 تبر‌دار", "flower_knight": "🏵 شوالیه گل",
+    "hammer_wielder": "🔨 پتک‌دار", "dornish_spearman": "🔱 نیزه‌دار دورنیش",
+}
+EQUIPMENT_LABELS = {key: value["label"] for key, value in CATALOG["EQUIPMENT"].items()}
+FLEET_LABELS = {"transport": "🚢 کشتی ترابری", "warship": "⚔️ کشتی جنگی"}
+
+
 def _cost(definition):
     return "، ".join(f"{RESOURCE_LABELS.get(k,k)} {int(v):,}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
 
@@ -107,9 +120,9 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
             fleet = (await session.scalars(select(FleetShip).where(FleetShip.castle_id==castle.id))).all()
             body += "📜 <b>لیست دارایی</b>\n📦 منابع\n"
             body += "\n".join(f"{RESOURCE_LABELS.get(k,k)}: <b>{int(v):,}</b>" for k,v in balances.items())
-            body += "\n\n⚔️ <b>ارتش</b>\n" + ("\n".join(f"{k}: {v.count:,}" for k,v in sorted({r.unit_key:r for r in army}.items())) or "بدون نیرو")
-            body += "\n\n🛠 <b>ادوات محاصره</b>\n" + ("\n".join(f"{r.item_key}: {r.count:,}" for r in gear) or "بدون ادوات")
-            body += "\n\n🚢 <b>ناوگان</b>\n" + ("\n".join(f"{r.ship_key}: {r.count:,}" for r in fleet) or "بدون کشتی")
+            body += "\n\n⚔️ <b>ارتش</b>\n" + ("\n".join(f"{ARMY_LABELS.get(r.unit_key,r.unit_key)}: {r.count:,}" for r in army) or "بدون نیرو")
+            body += "\n\n🛠 <b>ادوات محاصره</b>\n" + ("\n".join(f"{EQUIPMENT_LABELS.get(r.item_key,r.item_key)}: {r.count:,}" for r in gear) or "بدون ادوات")
+            body += "\n\n🚢 <b>ناوگان</b>\n" + ("\n".join(f"{FLEET_LABELS.get(r.ship_key,r.ship_key)}: {r.count:,}" for r in fleet) or "بدون کشتی")
             econ = await session.get(CastleEconomyState, castle.id)
             if econ:
                 body += f"\n\n🏗 کارگاه: {econ.workshop_level}/5\n⚓ اسکله: {econ.port_level}/15"
