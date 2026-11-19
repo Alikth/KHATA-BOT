@@ -15,9 +15,9 @@ from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_me
 router = Router()
 
 def _is_admin_actor(user_id: int | None, chat, cfg) -> bool:
-    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id
-                and chat and chat.type in ("group", "supergroup")
-                and cfg.admin_chat_id and chat.id == cfg.admin_chat_id)
+    # Superuser identity is the Telegram numeric user ID, not the current chat.
+    # Group registration and castle ownership are checked independently.
+    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id)
 
 async def _safe_edit_text(message, text: str, reply_markup=None):
     try:
@@ -98,7 +98,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
     if action == "back":
         await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
         return
-    async with session_factory() as session:
+    async with session_factory() as session, session.begin():
         lord = await get_lord(session, call.from_user.id)
         if action in ("assets", "buildings", "camps", "army", "trade", "war") and not lord:
             await _safe_edit_text(
@@ -110,9 +110,47 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         castle = await session.get(Castle, lord.castle_id) if lord else None
 
         if action == "assets":
+            from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState
+            from bot.integrations.site_api import configured, fetch_site_snapshot, sync_snapshot_to_postgres, SiteApiError
+            if configured():
+                try:
+                    snapshot = await fetch_site_snapshot(call.from_user.id, castle.name)
+                    await sync_snapshot_to_postgres(session, lord, snapshot)
+                except SiteApiError as exc:
+                    await _safe_edit_text(call.message, f"دریافت اطلاعات به‌روز سایت ناموفق بود: {escape(str(exc))}", reply_markup=section_back_menu())
+                    return
             balances = await get_balances(session, lord.id)
-            lines = [f"👑 پروفایل {escape(lord.display_name)}", f"🏰 {escape(castle.name) if castle else 'قلعه نامشخص'}", "", "📦 دارایی‌ها"]
-            lines.extend(f"{RESOURCE_NAMES.get(key, key)}: {value}" for key, value in balances.items())
+            production = (await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id==lord.castle_id).order_by(ProductionLevel.production_key))).all()
+            camps = (await session.scalars(select(CampLevel).where(CampLevel.castle_id==lord.castle_id).order_by(CampLevel.camp_key))).all()
+            special_camps = (await session.scalars(select(SpecialCampLevel).where(SpecialCampLevel.castle_id==lord.castle_id).order_by(SpecialCampLevel.camp_key))).all()
+            army = (await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id==lord.castle_id).order_by(ArmyUnit.unit_key))).all()
+            equipment = (await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id==lord.castle_id).order_by(EquipmentItem.item_key))).all()
+            fleet = (await session.scalars(select(FleetShip).where(FleetShip.castle_id==lord.castle_id).order_by(FleetShip.ship_key))).all()
+            economy = await session.get(CastleEconomyState, lord.castle_id)
+            lines = [f"👑 پروفایل {escape(lord.display_name)}", f"🏰 {escape(castle.name) if castle else 'قلعه نامشخص'}", "", "📦 منابع"]
+            lines.extend(f"{RESOURCE_NAMES.get(key, key)}: {value:,.0f}" for key, value in balances.items())
+            lines.append("\n🏗 ساختمان‌های تولید")
+            for row in production:
+                definition = GENERAL_PRODUCTIONS.get(row.production_key) or (SPECIAL_PRODUCTIONS.get(castle.region) if castle and SPECIAL_PRODUCTIONS.get(castle.region,{}).get("key")==row.production_key else None)
+                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+            lines.append("\n🏕 کمپ‌ها")
+            for row in camps:
+                definition = GENERAL_CAMPS.get(row.camp_key)
+                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+            for row in special_camps:
+                definition = next((x for x in SPECIAL_CAMPS.get(castle.region,[]) if x["key"]==row.camp_key),None) if castle else None
+                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+            lines.append("\n⚔️ ارتش")
+            lines.extend(f"{row.unit_key}: {row.count:,}" for row in army)
+            lines.append("\n🛠 تجهیزات")
+            lines.extend(f"{row.item_key}: {row.count:,}" for row in equipment)
+            lines.append("\n🚢 ناوگان")
+            lines.extend(f"{row.ship_key}: {row.count:,}" for row in fleet)
+            if economy and economy.food_debt:
+                lines.append(f"\n⚠️ بدهی غذا: {economy.food_debt:,}")
+                if economy.food_debt_due_at: lines.append(f"مهلت: {economy.food_debt_due_at:%Y-%m-%d %H:%M UTC}")
+            if economy:
+                lines.append(f"کارگاه: سطح {economy.workshop_level} | بندر: {'فعال' if economy.port_enabled else 'غیرفعال'} (سطح {economy.port_level})")
             body = "\n".join(lines)
         elif action in ("buildings", "camps"):
             from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel
@@ -205,6 +243,10 @@ async def set_lord_reply(message: Message, session_factory):
         target = message.reply_to_message.from_user
         try:
             lord = await create_lord(session, target.id, target.full_name, target.username, cfg.bot_owner_id, group.castle_id)
+            from bot.integrations.site_api import configured, assign_lord_on_site, sync_snapshot_to_postgres, SiteApiError
+            if configured():
+                snapshot = await assign_lord_on_site(target.id, group.castle_id and (await session.get(Castle, group.castle_id)).name, cfg.bot_owner_id)
+                await sync_snapshot_to_postgres(session, lord, snapshot)
             await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id), f"castle_id={group.castle_id}; chat_id={message.chat.id}")
             castle = await session.get(Castle, group.castle_id)
         except ValueError as exc:
@@ -439,7 +481,15 @@ async def upgrade_cmd(message: Message, session_factory):
         lord=await get_lord(session,message.from_user.id)
         if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
         try:
-            level,definition=await engine_upgrade(session,lord,parts[1],parts[2])
+            from bot.integrations.site_api import configured, upgrade_on_site, sync_snapshot_to_postgres
+            if configured():
+                castle = await session.get(Castle, lord.castle_id)
+                remote = await upgrade_on_site(message.from_user.id, castle.name, parts[1], parts[2])
+                await sync_snapshot_to_postgres(session, lord, remote["snapshot"])
+                level = int(remote["result"].get("newLevel", 0))
+                definition = (GENERAL_PRODUCTIONS.get(parts[2]) or GENERAL_CAMPS.get(parts[2]) or next((x for x in SPECIAL_CAMPS.get(castle.region,[]) if x["key"]==parts[2]), {}))
+            else:
+                level,definition=await engine_upgrade(session,lord,parts[1],parts[2])
             await audit(session,message.from_user.id,"building_upgraded",str(lord.castle_id),f"{parts[1]}:{parts[2]}:{level}")
         except ValueError as e: await message.answer(str(e)); return
     await message.answer(f"✅ {definition['label']} به سطح {level} ارتقا یافت.\nهزینه: " + "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()))
