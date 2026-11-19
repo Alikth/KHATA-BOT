@@ -15,9 +15,9 @@ from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_me
 router = Router()
 
 def _is_admin_actor(user_id: int | None, chat, cfg) -> bool:
-    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id
-                and chat and chat.type in ("group", "supergroup")
-                and cfg.admin_chat_id and chat.id == cfg.admin_chat_id)
+    # Superuser identity is the Telegram numeric user ID, not the current chat.
+    # Group registration and castle ownership are checked independently.
+    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id)
 
 async def _safe_edit_text(message, text: str, reply_markup=None):
     try:
@@ -98,7 +98,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
     if action == "back":
         await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
         return
-    async with session_factory() as session:
+    async with session_factory() as session, session.begin():
         lord = await get_lord(session, call.from_user.id)
         if action in ("assets", "buildings", "camps", "army", "trade", "war") and not lord:
             await _safe_edit_text(
@@ -108,11 +108,42 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
             )
             return
         castle = await session.get(Castle, lord.castle_id) if lord else None
+        reply_markup = section_back_menu()
 
         if action == "assets":
+            from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel, ArmyUnit, EquipmentItem, FleetShip, CastleEconomyState
             balances = await get_balances(session, lord.id)
-            lines = [f"👑 پروفایل {escape(lord.display_name)}", f"🏰 {escape(castle.name) if castle else 'قلعه نامشخص'}", "", "📦 دارایی‌ها"]
-            lines.extend(f"{RESOURCE_NAMES.get(key, key)}: {value}" for key, value in balances.items())
+            production = (await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id==lord.castle_id).order_by(ProductionLevel.production_key))).all()
+            camps = (await session.scalars(select(CampLevel).where(CampLevel.castle_id==lord.castle_id).order_by(CampLevel.camp_key))).all()
+            special_camps = (await session.scalars(select(SpecialCampLevel).where(SpecialCampLevel.castle_id==lord.castle_id).order_by(SpecialCampLevel.camp_key))).all()
+            army = (await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id==lord.castle_id).order_by(ArmyUnit.unit_key))).all()
+            equipment = (await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id==lord.castle_id).order_by(EquipmentItem.item_key))).all()
+            fleet = (await session.scalars(select(FleetShip).where(FleetShip.castle_id==lord.castle_id).order_by(FleetShip.ship_key))).all()
+            economy = await session.get(CastleEconomyState, lord.castle_id)
+            lines = [f"👑 پروفایل {escape(lord.display_name)}", f"🏰 {escape(castle.name) if castle else 'قلعه نامشخص'}", "", "📦 منابع"]
+            lines.extend(f"{RESOURCE_NAMES.get(key, key)}: {value:,.0f}" for key, value in balances.items())
+            lines.append("\n🏗 ساختمان‌های تولید")
+            for row in production:
+                definition = GENERAL_PRODUCTIONS.get(row.production_key) or (SPECIAL_PRODUCTIONS.get(castle.region) if castle and SPECIAL_PRODUCTIONS.get(castle.region,{}).get("key")==row.production_key else None)
+                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+            lines.append("\n🏕 کمپ‌ها")
+            for row in camps:
+                definition = GENERAL_CAMPS.get(row.camp_key)
+                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+            for row in special_camps:
+                definition = next((x for x in SPECIAL_CAMPS.get(castle.region,[]) if x["key"]==row.camp_key),None) if castle else None
+                if definition: lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+            lines.append("\n⚔️ ارتش")
+            lines.extend(f"{row.unit_key}: {row.count:,}" for row in army)
+            lines.append("\n🛠 تجهیزات")
+            lines.extend(f"{row.item_key}: {row.count:,}" for row in equipment)
+            lines.append("\n🚢 ناوگان")
+            lines.extend(f"{row.ship_key}: {row.count:,}" for row in fleet)
+            if economy and economy.food_debt:
+                lines.append(f"\n⚠️ بدهی غذا: {economy.food_debt:,}")
+                if economy.food_debt_due_at: lines.append(f"مهلت: {economy.food_debt_due_at:%Y-%m-%d %H:%M UTC}")
+            if economy:
+                lines.append(f"کارگاه: سطح {economy.workshop_level} | بندر: {'فعال' if economy.port_enabled else 'غیرفعال'} (سطح {economy.port_level})")
             body = "\n".join(lines)
         elif action in ("buildings", "camps"):
             from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel
@@ -123,6 +154,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
             lines = [f"🏰 {escape(castle.name) if castle else 'قلعه'}"]
             if action == "buildings":
                 lines.append("🏗 ساختمان‌های تولید")
+                buttons = []
                 for row in productions:
                     definition = GENERAL_PRODUCTIONS.get(row.production_key)
                     if not definition:
@@ -130,17 +162,26 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
                         definition = candidate if candidate.get("key") == row.production_key else None
                     if definition:
                         lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+                        if row.level < int(definition["max"]):
+                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:production:{row.production_key}")])
+                reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons + [[InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")]])
             if action == "camps":
                 lines.append("⚔️ کمپ‌ها")
+                buttons = []
                 for row in camps:
                     definition = GENERAL_CAMPS.get(row.camp_key)
                     if definition:
                         lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+                        if row.level < int(definition["max"]):
+                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:camp:{row.camp_key}")])
                 for row in special:
                     definitions = SPECIAL_CAMPS.get(castle.region, []) if castle else []
                     definition = next((item for item in definitions if item["key"] == row.camp_key), None)
                     if definition:
                         lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
+                        if row.level < int(definition["max"]):
+                            buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {definition['label']}", callback_data=f"upgrade:special_camp:{row.camp_key}")])
+                reply_markup = InlineKeyboardMarkup(inline_keyboard=buttons + [[InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")]])
             body = "\n".join(lines)
         elif action == "army":
             from bot.database.models import ArmyUnit, EquipmentItem, FleetShip
@@ -188,7 +229,7 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         else:
             body = "بخش درخواستی در دسترس نیست."
 
-    await _safe_edit_text(call.message, body, reply_markup=section_back_menu())
+    await _safe_edit_text(call.message, body, reply_markup=reply_markup)
 
 @router.message(F.text.regexp(r"(?i)^set lord$"))
 async def set_lord_reply(message: Message, session_factory):
@@ -201,15 +242,23 @@ async def set_lord_reply(message: Message, session_factory):
     async with session_factory() as session, session.begin():
         group = await get_group(session, message.chat.id)
         if not group:
-            await message.answer("این گروه هنوز به قلعه متصل نشده است."); return
+            await message.answer("این گروه هنوز به قلعه‌ای متصل نشده است.")
+            return
         target = message.reply_to_message.from_user
         try:
-            lord = await create_lord(session, target.id, target.full_name, target.username, cfg.bot_owner_id, group.castle_id)
-            await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id), f"castle_id={group.castle_id}; chat_id={message.chat.id}")
+            lord = await create_lord(
+                session, target.id, target.full_name, target.username,
+                cfg.bot_owner_id, group.castle_id
+            )
+            await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id),
+                        f"castle_id={group.castle_id}; chat_id={message.chat.id}")
             castle = await session.get(Castle, group.castle_id)
         except ValueError as exc:
-            await message.answer(str(exc)); return
-    await message.answer(f"✅ لرد با موفقیت انتخاب شد.\n🏰 قلعه: {castle.name}\n👑 لرد: {target.full_name}")
+            await message.answer(str(exc))
+            return
+    await message.answer(
+        f"✅ لرد با موفقیت در دیتابیس مستقل ربات ثبت شد.\\n🏰 قلعه: {castle.name}\\n👑 لرد: {target.full_name}"
+    )
 
 @router.message(Command("registercastle"))
 async def register_castle(message: Message, session_factory):
@@ -428,21 +477,97 @@ async def buildings_cmd(message: Message, session_factory):
     lines.append("\nارتقا: /upgrade production farm یا /upgrade camp swordsman")
     await message.answer("\n".join(lines))
 
+@router.callback_query(F.data.startswith("upgrade:"))
+async def upgrade_prompt(call: CallbackQuery, session_factory):
+    if not call.from_user or not call.message:
+        await call.answer()
+        return
+    _, category, key = call.data.split(":", 2)
+    async with session_factory() as session:
+        lord = await get_lord(session, call.from_user.id)
+        if not lord:
+            await call.answer("برای این حساب لردی ثبت نشده است.", show_alert=True)
+            return
+        castle = await session.get(Castle, lord.castle_id)
+        if category == "production":
+            definition = GENERAL_PRODUCTIONS.get(key) or (SPECIAL_PRODUCTIONS.get(castle.region) if SPECIAL_PRODUCTIONS.get(castle.region, {}).get("key") == key else None)
+            model, field = ProductionLevel, "production_key"
+        elif category == "camp":
+            definition = GENERAL_CAMPS.get(key)
+            model, field = CampLevel, "camp_key"
+        elif category == "special_camp":
+            definition = next((x for x in SPECIAL_CAMPS.get(castle.region, []) if x["key"] == key), None)
+            model, field = SpecialCampLevel, "camp_key"
+        else:
+            definition = None
+            model, field = ProductionLevel, "production_key"
+        if not definition:
+            await call.answer("این ارتقا برای قلعه تعریف نشده است.", show_alert=True)
+            return
+        row = await session.scalar(select(model).where(model.castle_id == lord.castle_id, getattr(model, field) == key))
+        level = int(row.level if row else 0)
+        if level >= int(definition.get("max", 0)):
+            await call.answer("این مورد به حداکثر سطح رسیده است.", show_alert=True)
+            return
+    cost = "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ تأیید ارتقا", callback_data=f"upgradeconfirm:{category}:{key}")],
+        [InlineKeyboardButton(text="❌ انصراف", callback_data="upgradecancel")],
+    ])
+    await _safe_edit_text(call.message, f"ارتقای {definition['label']}\\nسطح فعلی: {level}\\nسطح بعدی: {level+1}\\nهزینه: {cost}\\n\\nآیا تأیید می‌کنی؟", reply_markup=keyboard)
+    await call.answer()
+
+
+@router.callback_query(F.data == "upgradecancel")
+async def upgrade_cancel(call: CallbackQuery):
+    if call.message:
+        await _safe_edit_text(call.message, "عملیات ارتقا لغو شد.", reply_markup=section_back_menu())
+    await call.answer("لغو شد")
+
+
+@router.callback_query(F.data.startswith("upgradeconfirm:"))
+async def upgrade_confirm(call: CallbackQuery, session_factory):
+    if not call.from_user or not call.message:
+        await call.answer()
+        return
+    _, category, key = call.data.split(":", 2)
+    try:
+        async with session_factory() as session, session.begin():
+            lord = await get_lord(session, call.from_user.id)
+            if not lord:
+                raise ValueError("برای این حساب لردی ثبت نشده است.")
+            castle = await session.get(Castle, lord.castle_id)
+            level, definition = await engine_upgrade(session, lord, category, key)
+            await audit(session, call.from_user.id, "building_upgraded", str(lord.castle_id), f"{category}:{key}:{level}")
+        cost = "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
+        await _safe_edit_text(call.message, f"✅ {definition['label']} به سطح {level} ارتقا یافت.\\nهزینه: {cost}", reply_markup=section_back_menu())
+        await call.answer("ارتقا انجام شد")
+    except ValueError as exc:
+        await call.answer(str(exc), show_alert=True)
+
+
 @router.message(Command("upgrade"))
 async def upgrade_cmd(message: Message, session_factory):
     parts=(message.text or "").split()
     if len(parts)!=3 or parts[1] not in ("production","camp","special_camp"):
-        await message.answer("فرمت: /upgrade production farm\nیا /upgrade camp swordsman\nیا /upgrade special_camp ranger"); return
+        await message.answer("فرمت: /upgrade production farm\\nیا /upgrade camp swordsman\\nیا /upgrade special_camp ranger")
+        return
     async with session_factory() as session, session.begin():
         group=await get_group(session,message.chat.id)
-        if not group: await message.answer("این گروه به قلعه متصل نیست."); return
+        if not group:
+            await message.answer("این گروه به قلعه متصل نیست.")
+            return
         lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        if not lord or lord.castle_id!=group.castle_id:
+            await message.answer("در این گروه لرد نیستی.")
+            return
         try:
             level,definition=await engine_upgrade(session,lord,parts[1],parts[2])
             await audit(session,message.from_user.id,"building_upgraded",str(lord.castle_id),f"{parts[1]}:{parts[2]}:{level}")
-        except ValueError as e: await message.answer(str(e)); return
-    await message.answer(f"✅ {definition['label']} به سطح {level} ارتقا یافت.\nهزینه: " + "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()))
+        except ValueError as exc:
+            await message.answer(str(exc))
+            return
+    await message.answer(f"✅ {definition['label']} به سطح {level} ارتقا یافت.\\nهزینه: " + "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()))
 
 @router.message(Command("army"))
 async def army_cmd(message: Message, session_factory):

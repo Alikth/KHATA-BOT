@@ -20,3 +20,8 @@ def test_empty_optional_chat_ids_are_ignored():
     )
     assert settings.admin_chat_id == 0
     assert settings.admin_audit_chat_id is None
+
+
+def test_telegram_proxy_is_optional_and_configurable():
+    settings = Settings(telegram_proxy="http://127.0.0.1:2080", _env_file=None)
+    assert settings.telegram_proxy == "http://127.0.0.1:2080"
