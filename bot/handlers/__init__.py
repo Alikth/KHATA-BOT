@@ -101,13 +101,22 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         return
     async with session_factory() as session, session.begin():
         lord = await get_lord(session, call.from_user.id)
-        if action in ("assets", "buildings", "camps", "army", "trade", "war") and not lord:
-            await _safe_edit_text(
-                call.message,
-                "برای این حساب هنوز لرد فعالی ثبت نشده است. پس از اتصال حساب به قلعه، اطلاعات بازی از همین منو نمایش داده می‌شود.",
-                reply_markup=main_menu(),
-            )
-            return
+        if action in ("assets", "buildings", "camps", "army", "trade", "war"):
+            group = await get_group(session, call.message.chat.id)
+            if not lord:
+                await _safe_edit_text(
+                    call.message,
+                    "برای این حساب هنوز لرد فعالی ثبت نشده است. پس از تعیین لرد توسط مالک اصلی، اطلاعات بازی نمایش داده می‌شود.",
+                    reply_markup=main_menu(),
+                )
+                return
+            if not group or lord.castle_id != group.castle_id:
+                await _safe_edit_text(
+                    call.message,
+                    "این منو فقط در گروه قلعه‌ای که لرد به آن اختصاص داده شده قابل استفاده است.",
+                    reply_markup=main_menu(),
+                )
+                return
         castle = await session.get(Castle, lord.castle_id) if lord else None
         reply_markup = section_back_menu()
 
