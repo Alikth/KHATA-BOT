@@ -662,7 +662,7 @@ async def transfer_response_cmd(message: Message, session_factory):
 @router.message(Command("warresolve"))
 async def war_resolve_admin_cmd(message: Message, session_factory, bot):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or message.chat.id!=cfg.admin_chat_id or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
         await message.answer("این دستور فقط برای مالک اصلی با نشست مدیریتی فعال است.");return
     # /warresolve ID attacker|defender attacker:swordsman=10,archer=2 defender:spearman=5
     p=(message.text or "").split(maxsplit=3)
@@ -713,7 +713,7 @@ async def trade_pack_cmd(message: Message, bot, session_factory):
 @router.message(Command("adminscenarios"))
 async def admin_scenarios_cmd(message: Message, session_factory):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or message.chat.id!=cfg.admin_chat_id or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(WarScenario).where(WarScenario.reviewed.is_(False)).order_by(WarScenario.created_at).limit(30))).all()
@@ -723,7 +723,7 @@ async def admin_scenarios_cmd(message: Message, session_factory):
 @router.message(Command("reviewscenario"))
 async def review_scenario_cmd(message: Message, session_factory, bot):
     cfg=get_settings();p=(message.text or "").split(maxsplit=2)
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or message.chat.id!=cfg.admin_chat_id or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     if len(p)<3: await message.answer("فرمت: /reviewscenario شناسه نتیجه بررسی");return
     async with session_factory() as session,session.begin():
@@ -752,7 +752,7 @@ async def cancel_march_cmd(message: Message, session_factory):
 @router.message(Command("adminwars"))
 async def admin_wars_cmd(message: Message, session_factory):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or message.chat.id!=cfg.admin_chat_id or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(WarExpedition).order_by(WarExpedition.id.desc()).limit(30))).all()
@@ -764,7 +764,7 @@ async def admin_wars_cmd(message: Message, session_factory):
 @router.message(Command("admincastles"))
 async def admin_castles_cmd(message: Message, session_factory):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or message.chat.id!=cfg.admin_chat_id or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(Castle).order_by(Castle.region,Castle.name))).all()
@@ -818,7 +818,7 @@ async def march_garrison_cmd(message: Message, session_factory, bot):
 @router.message(Command("admintrades"))
 async def admin_trades_cmd(message: Message, session_factory):
     cfg=get_settings()
-    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or message.chat.id!=cfg.admin_chat_id or _admin_sessions.get(message.from_user.id,0)<monotonic():
+    if not message.from_user or message.from_user.id!=cfg.bot_owner_id or not _is_admin_chat(message, cfg) or _admin_sessions.get(message.from_user.id,0)<monotonic():
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(TradeOffer).order_by(TradeOffer.id.desc()).limit(30))).all()
