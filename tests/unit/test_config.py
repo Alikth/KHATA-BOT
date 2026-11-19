@@ -20,3 +20,15 @@ def test_empty_optional_chat_ids_are_ignored():
     )
     assert settings.admin_chat_id == 0
     assert settings.admin_audit_chat_id is None
+
+
+def test_site_integration_settings_are_optional_and_configurable():
+    settings = Settings(
+        site_api_url="https://khata-games.khta.workers.dev",
+        site_api_secret="test-secret",
+        site_api_timeout_seconds=20,
+        _env_file=None,
+    )
+    assert settings.site_api_url.endswith("workers.dev")
+    assert settings.site_api_secret == "test-secret"
+    assert settings.site_api_timeout_seconds == 20
