@@ -62,27 +62,38 @@ def calculate_food_debt_casualties(army: dict[str, int], food_debt: int) -> dict
     return casualties
 
 async def initialize_castle(session: AsyncSession, castle: Castle):
-    for key, amount in STARTING_RESOURCES.items():
-        session.add(ResourceBalance(lord_id=0, resource_code=key, amount=amount)) if False else None
+    """Seed only missing local mirror rows; never reset an existing castle inventory."""
+    async def seed_levels(model, field: str, values: dict[str, int]):
+        existing = set((await session.scalars(
+            select(getattr(model, field)).where(model.castle_id == castle.id)
+        )).all())
+        for key, level in values.items():
+            if key not in existing:
+                session.add(model(castle_id=castle.id, **{field: key}, level=level))
+
+    async def seed_counts(model, field: str, values: dict[str, int]):
+        existing = set((await session.scalars(
+            select(getattr(model, field)).where(model.castle_id == castle.id)
+        )).all())
+        for key, count in values.items():
+            if key not in existing:
+                session.add(model(castle_id=castle.id, **{field: key}, count=count))
+
     defaults = {"farm":1,"village":1,"lumber":0,"stone":0,"iron":0,"recreation":0,"market":0,"stable":0,"slaughterhouse":0}
-    for key, level in defaults.items():
-        session.add(ProductionLevel(castle_id=castle.id, production_key=key, level=level))
     special = SPECIAL_PRODUCTIONS.get(castle.region)
     if special:
-        session.add(ProductionLevel(castle_id=castle.id, production_key=special["key"], level=0))
-    for key in GENERAL_CAMPS:
-        session.add(CampLevel(castle_id=castle.id, camp_key=key, level=0))
-    for row in SPECIAL_CAMPS.get(castle.region, []):
-        session.add(SpecialCampLevel(castle_id=castle.id, camp_key=row["key"], level=0))
-    for key, count in STARTING_ARMY.items():
-        session.add(ArmyUnit(castle_id=castle.id, unit_key=key, count=count))
-    for key in EQUIPMENT:
-        session.add(EquipmentItem(castle_id=castle.id, item_key=key, count=0))
+        defaults[special["key"]] = 0
+    await seed_levels(ProductionLevel, "production_key", defaults)
+    await seed_levels(CampLevel, "camp_key", {key:0 for key in GENERAL_CAMPS})
+    await seed_levels(SpecialCampLevel, "camp_key", {row["key"]:0 for row in SPECIAL_CAMPS.get(castle.region, [])})
+    await seed_counts(ArmyUnit, "unit_key", STARTING_ARMY)
+    await seed_counts(EquipmentItem, "item_key", {key:0 for key in EQUIPMENT})
     naval_names={"Eastwatch","Karhold","Seagard","Gulltown","Pyke","Ten Towers","Hammerhorn","Casterly Rock","King's Landing","Dragonstone","Storm's End","Oldtown","Sunspear","Yronwood"}
     naval = castle.name in naval_names
-    session.add(FleetShip(castle_id=castle.id, ship_key="transport", count=1 if naval else 0))
-    session.add(FleetShip(castle_id=castle.id, ship_key="warship", count=1 if naval else 0))
-    session.add(CastleEconomyState(castle_id=castle.id, port_enabled=naval))
+    await seed_counts(FleetShip, "ship_key", {"transport":1 if naval else 0,"warship":1 if naval else 0})
+    economy = await session.get(CastleEconomyState, castle.id)
+    if economy is None:
+        session.add(CastleEconomyState(castle_id=castle.id, port_enabled=naval))
 
 async def _balances(session, lord_id: int):
     rows=(await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id==lord_id).with_for_update())).all()
