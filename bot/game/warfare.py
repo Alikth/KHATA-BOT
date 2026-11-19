@@ -60,7 +60,7 @@ async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_nam
         if expedition_type=="land" and kind=="fleet": continue
         values=assets.get(kind,{})
         if not isinstance(values,dict): raise ValueError("ساختار دارایی‌های لشکر معتبر نیست.")
-        for key,raw in values.items():
+        for key,raw in sorted(values.items()):
             n=int(raw)
             if n<0 or n>1000000: raise ValueError("تعداد دارایی معتبر نیست.")
             if not n: continue
