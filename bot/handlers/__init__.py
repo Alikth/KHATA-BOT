@@ -482,10 +482,6 @@ async def upgrade_prompt(call: CallbackQuery, session_factory):
     if not call.from_user or not call.message:
         await call.answer()
         return
-    from bot.integrations.site_api import configured
-    if not configured():
-        await call.answer("اتصال امن به سایت تنظیم نشده است.", show_alert=True)
-        return
     _, category, key = call.data.split(":", 2)
     async with session_factory() as session:
         lord = await get_lord(session, call.from_user.id)
@@ -518,7 +514,7 @@ async def upgrade_prompt(call: CallbackQuery, session_factory):
         [InlineKeyboardButton(text="✅ تأیید ارتقا", callback_data=f"upgradeconfirm:{category}:{key}")],
         [InlineKeyboardButton(text="❌ انصراف", callback_data="upgradecancel")],
     ])
-    await _safe_edit_text(call.message, f"ارتقای {definition['label']}\nسطح فعلی: {level}\nسطح بعدی: {level+1}\nهزینه: {cost}\n\nآیا تأیید می‌کنی؟", reply_markup=keyboard)
+    await _safe_edit_text(call.message, f"ارتقای {definition['label']}\\nسطح فعلی: {level}\\nسطح بعدی: {level+1}\\nهزینه: {cost}\\n\\nآیا تأیید می‌کنی؟", reply_markup=keyboard)
     await call.answer()
 
 
@@ -534,56 +530,44 @@ async def upgrade_confirm(call: CallbackQuery, session_factory):
     if not call.from_user or not call.message:
         await call.answer()
         return
-    from bot.integrations.site_api import configured, upgrade_on_site, sync_snapshot_to_postgres
-    if not configured():
-        await call.answer("اتصال امن به سایت تنظیم نشده است.", show_alert=True)
-        return
     _, category, key = call.data.split(":", 2)
     try:
         async with session_factory() as session, session.begin():
             lord = await get_lord(session, call.from_user.id)
             if not lord:
-                raise SiteApiError("برای این حساب لردی ثبت نشده است.")
+                raise ValueError("برای این حساب لردی ثبت نشده است.")
             castle = await session.get(Castle, lord.castle_id)
-            remote = await upgrade_on_site(call.from_user.id, castle.name, category, key)
-            await sync_snapshot_to_postgres(session, lord, remote["snapshot"])
-            await audit(session, call.from_user.id, "building_upgraded", str(lord.castle_id), f"{category}:{key}:{remote['result'].get('newLevel')}")
-            level = int(remote["result"].get("newLevel", 0))
-            definition = GENERAL_PRODUCTIONS.get(key) or (SPECIAL_PRODUCTIONS.get(castle.region) if SPECIAL_PRODUCTIONS.get(castle.region, {}).get("key") == key else None) or GENERAL_CAMPS.get(key) or next((x for x in SPECIAL_CAMPS.get(castle.region, []) if x["key"] == key), {})
+            level, definition = await engine_upgrade(session, lord, category, key)
+            await audit(session, call.from_user.id, "building_upgraded", str(lord.castle_id), f"{category}:{key}:{level}")
         cost = "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
-        await _safe_edit_text(call.message, f"✅ {definition['label']} به سطح {level} ارتقا یافت.\nهزینه: {cost}", reply_markup=section_back_menu())
+        await _safe_edit_text(call.message, f"✅ {definition['label']} به سطح {level} ارتقا یافت.\\nهزینه: {cost}", reply_markup=section_back_menu())
         await call.answer("ارتقا انجام شد")
-    except (ValueError, SiteApiError) as exc:
+    except ValueError as exc:
         await call.answer(str(exc), show_alert=True)
 
 
 @router.message(Command("upgrade"))
 async def upgrade_cmd(message: Message, session_factory):
-    from bot.integrations.site_api import configured
-    if not configured():
-        await message.answer("ارتقا تا زمان تنظیم اتصال امن به سایت غیرفعال است تا موجودی دو دیتابیس از هم جدا نشود.")
-        return
     parts=(message.text or "").split()
     if len(parts)!=3 or parts[1] not in ("production","camp","special_camp"):
-        await message.answer("فرمت: /upgrade production farm\nیا /upgrade camp swordsman\nیا /upgrade special_camp ranger"); return
+        await message.answer("فرمت: /upgrade production farm\\nیا /upgrade camp swordsman\\nیا /upgrade special_camp ranger")
+        return
     async with session_factory() as session, session.begin():
         group=await get_group(session,message.chat.id)
-        if not group: await message.answer("این گروه به قلعه متصل نیست."); return
+        if not group:
+            await message.answer("این گروه به قلعه متصل نیست.")
+            return
         lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        if not lord or lord.castle_id!=group.castle_id:
+            await message.answer("در این گروه لرد نیستی.")
+            return
         try:
-            from bot.integrations.site_api import configured, upgrade_on_site, sync_snapshot_to_postgres
-            if configured():
-                castle = await session.get(Castle, lord.castle_id)
-                remote = await upgrade_on_site(message.from_user.id, castle.name, parts[1], parts[2])
-                await sync_snapshot_to_postgres(session, lord, remote["snapshot"])
-                level = int(remote["result"].get("newLevel", 0))
-                definition = (GENERAL_PRODUCTIONS.get(parts[2]) or (SPECIAL_PRODUCTIONS.get(castle.region) if SPECIAL_PRODUCTIONS.get(castle.region,{}).get("key")==parts[2] else None) or GENERAL_CAMPS.get(parts[2]) or next((x for x in SPECIAL_CAMPS.get(castle.region,[]) if x["key"]==parts[2]), {}))
-            else:
-                level,definition=await engine_upgrade(session,lord,parts[1],parts[2])
+            level,definition=await engine_upgrade(session,lord,parts[1],parts[2])
             await audit(session,message.from_user.id,"building_upgraded",str(lord.castle_id),f"{parts[1]}:{parts[2]}:{level}")
-        except (ValueError, SiteApiError) as e: await message.answer(str(e)); return
-    await message.answer(f"✅ {definition['label']} به سطح {level} ارتقا یافت.\nهزینه: " + "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()))
+        except ValueError as exc:
+            await message.answer(str(exc))
+            return
+    await message.answer(f"✅ {definition['label']} به سطح {level} ارتقا یافت.\\nهزینه: " + "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()))
 
 @router.message(Command("army"))
 async def army_cmd(message: Message, session_factory):
