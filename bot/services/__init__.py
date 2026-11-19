@@ -71,7 +71,7 @@ async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, o
     recipient = await get_lord(session, recipient_id)
     if not recipient or recipient.id == sender.id:
         raise ValueError("بازیکن مقصد معتبر نیست.")
-    balances = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id == sender.id).with_for_update())).all()
+    balances = (await session.scalars(select(ResourceBalance).where(ResourceBalance.lord_id == sender.id).order_by(ResourceBalance.resource_code).with_for_update())).all()
     if {r.resource_code:r.amount for r in balances}.get(offered_resource, 0) < offered_amount:
         raise ValueError("منابع کافی برای پیشنهاد معامله نداری.")
     offer = TradeOffer(sender_lord_id=sender.id, recipient_lord_id=recipient.id, offered_resource=offered_resource, offered_amount=offered_amount, requested_resource=requested_resource, requested_amount=requested_amount, status="pending")
