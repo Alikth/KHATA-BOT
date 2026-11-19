@@ -69,8 +69,6 @@ async def get_balances(session: AsyncSession, lord_id: int):
 async def create_trade(session: AsyncSession, sender: Lord, recipient_id: int, offered_resource: str, offered_amount: int, requested_resource: str, requested_amount: int):
     from bot.game.engine import ensure_castle_not_under_siege
     from bot.game.controls import get_controls
-    if not (await get_controls(session))["trades_open"]:
-        raise ValueError("ثبت پیشنهاد تجارت توسط مدیریت قفل شده است.")
     if offered_resource not in RESOURCE_NAMES or requested_resource not in RESOURCE_NAMES:
         raise ValueError("منبع نامعتبر است.")
     if offered_amount <= 0 or requested_amount <= 0:
