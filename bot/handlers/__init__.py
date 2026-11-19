@@ -108,6 +108,9 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
     if action == "back":
         await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
         return
+    from bot.handlers.ui import render_player_section
+    await render_player_section(call, session_factory, action)
+    return
     async with session_factory() as session, session.begin():
         lord = await get_lord(session, call.from_user.id)
         if action in ("assets", "buildings", "camps", "army", "trade", "war"):
@@ -1283,3 +1286,8 @@ async def admin_cancel_trade_cmd(message: Message, session_factory, bot):
         await message.answer(f"معامله #{offer_id} لغو شد.")
     except (ValueError, TypeError) as exc:
         await message.answer(str(exc))
+
+
+# Interactive inline workflows are isolated from the legacy command handlers.
+from bot.handlers.ui import router as ui_router
+router.include_router(ui_router)
