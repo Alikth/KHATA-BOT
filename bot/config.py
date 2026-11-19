@@ -6,7 +6,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True)
     bot_token: str = ""
     bot_owner_id: int = Field(default=0, ge=0)
-    admin_password_hash: str = ""
     database_url: str = ""
     log_level: str = "INFO"
     backup_dir: str = "./var/backups"
@@ -20,7 +19,6 @@ class Settings(BaseSettings):
     starting_food: int = 1000
     admin_chat_id: int = 0
     admin_audit_chat_id: int | None = None
-    admin_session_minutes: int = 20
 
 @lru_cache
 def get_settings() -> Settings:
