@@ -83,8 +83,8 @@ async def main():
                             )
                         ).all()
                         message = (
-                            f"⚔️ لشکرکشی #{row.id} به مقصد رسید\\n"
-                            f"{origin.name} → {target.name}\\n"
+                            f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n"
+                            f"{origin.name} → {target.name}\n"
                             "مهاجم باید دستور بعدی را ثبت کند."
                         )
                         notices.extend((group.telegram_chat_id, message) for group in groups)
