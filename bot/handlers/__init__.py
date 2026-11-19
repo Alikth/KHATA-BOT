@@ -79,7 +79,7 @@ async def persian_menu_callback(call: CallbackQuery):
         "announcements": "📣 <b>اعلان‌ها</b>\nاطلاعیه‌های رسمی بازی در گروه اعلان‌ها منتشر می‌شوند.",
         "help": "ℹ️ <b>راهنمای بازی</b>\nراهنمای کامل دستورات: /help\nنام‌های فنی دستورات برای سازگاری داخلی انگلیسی می‌مانند؛ منوها و راهنمای بازیکنان فارسی هستند.",
         "camps": "⚔️ <b>کمپ‌ها</b>\nکمپ‌های عمومی: شمشیرزن، کماندار، نیزه‌دار و سواره‌نظام.\nکمپ ویژه با توجه به منطقه قلعه تعیین می‌شود.\nبرای دیدن سطح کمپ‌ها: /buildings\nبرای ارتقا: /upgrade camp نام_کمپ یا /upgrade special_camp نام_کمپ",
-    };
+    }
     await call.answer()
     await call.message.answer(texts.get(action, "بخش درخواستی پیدا نشد."), reply_markup=main_menu())
 
@@ -689,6 +689,8 @@ async def admin_help_cmd(message: Message):
         "/admincastles — فهرست قلعه‌ها\n/adminwars — گزارش لشکرکشی‌ها\n/admintrades — گزارش تجارت‌ها\n"
         "/adminscenarios — سناریوهای بررسی‌نشده\n"
         "/setresource شناسه_تلگرام منبع مقدار — تغییر موجودی هر لرد\n"
+        "/setasset شناسه_قلعه نوع کلید مقدار — ویرایش دارایی قلعه\n"
+        "/setlordcastle شناسه_تلگرام شناسه_قلعه — جابه‌جایی لرد\n"
         "/adminlogs — آخرین گزارش‌های مدیریتی"
     )
 
