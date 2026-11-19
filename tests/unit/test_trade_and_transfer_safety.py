@@ -48,7 +48,7 @@ async def test_accepted_troop_transfer_changes_garrison_owner_to_receiver():
     )
     added = []
     session = SimpleNamespace(
-        scalar=AsyncMock(side_effect=[request, expedition]),
+        scalar=AsyncMock(side_effect=[request, expedition, None]),
         add=added.append,
     )
     lord = SimpleNamespace(id=22)
