@@ -2,6 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from bot.config import get_settings
 from bot.database.base import Base
@@ -29,7 +30,12 @@ async def main():
             else:
                 # Deliberately discard offline wall-clock time: the world pauses while the host is off.
                 await advance_world_clock(session, reset_real_tick=True)
-    bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    telegram_session = AiohttpSession(proxy=cfg.telegram_proxy) if cfg.telegram_proxy else None
+    bot = Bot(
+        cfg.bot_token,
+        session=telegram_session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher()
     dp.include_router(handlers.router)
     dp["session_factory"] = session_factory
