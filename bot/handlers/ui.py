@@ -418,12 +418,26 @@ async def trade_request_input(message:Message,state:FSMContext,session_factory,b
             lord,castle=await _player(session,message.from_user.id,message.chat.id)
             offer=await create_trade_bundle(session,lord,int(data["trade_target"]),data["trade_offered"],requested)
             recipient=await get_lord(session,int(data["trade_target"]))
+            target_group=await session.scalar(select(GroupRegistration).where(
+                GroupRegistration.castle_id==recipient.castle_id,
+                GroupRegistration.enabled.is_(True)))
+            if not target_group:
+                raise ValueError("گروه قلعه مقصد ثبت یا فعال نیست؛ پیشنهاد تجارت ارسال نشد.")
+            target_chat_id=target_group.telegram_chat_id
+            recipient_name=recipient.display_name
             await audit(session,message.from_user.id,"trade_bundle_created",str(offer.id))
         await state.clear()
-        await message.answer(f"✅ پیشنهاد تجارت #{offer.id} برای {escape(recipient.display_name)} ثبت شد.")
+        await message.answer(f"✅ پیشنهاد تجارت #{offer.id} برای {escape(recipient_name)} ثبت شد.")
+        decision=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ پذیرش",callback_data=f"trade:accept:{offer.id}"),
+            InlineKeyboardButton(text="❌ رد",callback_data=f"trade:reject:{offer.id}")]])
+        await bot.send_message(target_chat_id,
+            f"🤝 <b>پیشنهاد تجارت جدید #{offer.id}</b>\\nاز لرد: {escape(lord.display_name)}\\nارسال: {data['trade_offered']}\\nدریافت: {requested}",
+            reply_markup=decision)
         if get_settings().trade_log_chat_id:
             await bot.send_message(get_settings().trade_log_chat_id,f"پیشنهاد #{offer.id}: {data['trade_offered']} در برابر {requested}")
-    except ValueError as exc: await message.answer(str(exc))
+    except ValueError as exc:
+        await message.answer(str(exc))
 
 
 @router.message(UIFlow.war_assets)
