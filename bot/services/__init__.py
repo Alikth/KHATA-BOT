@@ -28,14 +28,14 @@ def validate_castle_selection(castle_name: str, region: str, house: str) -> None
     raise ValueError("نام قلعه، منطقه یا خاندان با کاتالوگ رسمی بازی مطابقت ندارد.")
 
 
-async def create_castle_group(session: AsyncSession, chat_id: int, title: str, castle_name: str, region: str, house: str, owner_id: int):
+async def create_castle_group(session: AsyncSession, chat_id: int, title: str, castle_name: str, region: str, house: str, owner_id: int, is_coastal: bool = False):
     validate_castle_selection(castle_name, region, house)
     if await get_group(session, chat_id):
         raise ValueError("این گروه قبلاً به یک قلعه متصل شده است.")
     castle = await session.scalar(select(Castle).where(Castle.name == castle_name))
     if castle:
         raise ValueError("این قلعه قبلاً به گروه دیگری اختصاص داده شده است.")
-    castle = Castle(name=castle_name, region=region, house=house)
+    castle = Castle(name=castle_name, region=region, house=house, is_coastal=bool(is_coastal))
     session.add(castle)
     await session.flush()
     group = GroupRegistration(telegram_chat_id=chat_id, title=title[:255], chat_type="supergroup", castle_id=castle.id, registered_by_telegram_id=owner_id)
