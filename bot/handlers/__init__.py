@@ -109,12 +109,22 @@ async def persian_menu_callback(call: CallbackQuery, session_factory):
         await call.answer()
         return
     if action == "back":
+        cfg = get_settings()
+        owner = bool(cfg.bot_owner_id and call.from_user.id == cfg.bot_owner_id)
         await call.answer()
-        await _safe_edit_text(
-            call.message,
-            "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.",
-            reply_markup=main_menu(),
-        )
+        if owner:
+            from bot.handlers.ui import _admin_panel_text
+            await _safe_edit_text(
+                call.message,
+                await _admin_panel_text(session_factory),
+                reply_markup=admin_menu(),
+            )
+        else:
+            await _safe_edit_text(
+                call.message,
+                "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.",
+                reply_markup=main_menu(),
+            )
         return
     from bot.handlers.ui import render_player_section
     await render_player_section(call, session_factory, action)
