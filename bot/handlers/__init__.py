@@ -348,7 +348,8 @@ async def admin_menu_callback(call: CallbackQuery, session_factory):
                 body = f"📊 <b>وضعیت جهان</b>\nساعت جهان: {'متوقف' if paused else 'فعال'}\n" + "\n".join(counts)
             elif action == "castles":
                 rows = (await session.scalars(select(Castle).order_by(Castle.region, Castle.name).limit(80))).all()
-                body = "🏰 <b>قلعه‌ها</b>\n" + ("\n".join(f"#{x.id} {escape(x.name)} | {escape(x.region)} | {escape(x.house)} | {'دریایی' if x.is_coastal else 'خشکی'} | {'فعال' if x.active else 'غیرفعال'}" for x in rows) or "قلعه‌ای ثبت نشده است.")
+                registered_ids = set((await session.scalars(select(GroupRegistration.castle_id))).all())
+                body = "🏰 <b>فهرست قلعه‌های نقشه</b>\\n" + ("\\n".join(f"#{x.id} {escape(x.name)} | {escape(x.region)} | {escape(x.house)} | {'دریایی' if x.is_coastal else 'خشکی'} | {'گروه متصل' if x.id in registered_ids else 'بدون گروه'}" for x in rows) or "قلعه‌ای ثبت نشده است.")
             elif action == "lords":
                 rows = (await session.scalars(select(Lord).order_by(Lord.id.desc()).limit(80))).all()
                 body = "👑 <b>لردها</b>\n" + ("\n".join(f"#{x.id} {escape(x.display_name)} | تلگرام <code>{x.telegram_user_id}</code> | قلعه {x.castle_id} | {x.status}" for x in rows) or "لردی ثبت نشده است.")
@@ -879,7 +880,8 @@ async def admin_castles_cmd(message: Message, session_factory):
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(Castle).order_by(Castle.region,Castle.name))).all()
-    await message.answer("قلعه‌های ثبت‌شده:\n"+"\n".join(f"#{x.id} {x.name} | {x.region} | {x.house} | {'فعال' if x.active else 'غیرفعال'}" for x in rows) if rows else "قلعه‌ای ثبت نشده است.")
+        registered_ids=set((await session.scalars(select(GroupRegistration.castle_id))).all())
+    await message.answer("فهرست قلعه‌های نقشه:\\n"+"\\n".join(f"#{x.id} {x.name} | {x.region} | {x.house} | {'دریایی' if x.is_coastal else 'خشکی'} | {'گروه متصل' if x.id in registered_ids else 'بدون گروه'}" for x in rows) if rows else "قلعه‌ای ثبت نشده است.")
 
 @router.message(Command("garrisons"))
 async def garrisons_cmd(message: Message, session_factory):
