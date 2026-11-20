@@ -1179,3 +1179,39 @@ async def admin_cancel_trade_cmd(message: Message, session_factory, bot):
 # Interactive inline workflows are isolated from the legacy command handlers.
 from bot.handlers.ui import router as ui_router
 router.include_router(ui_router)
+
+
+@router.errors()
+async def unhandled_update_error(event):
+    """Never leave Telegram callback buttons spinning when a handler crashes.
+
+    Keep the full traceback in the bot log so the underlying failure can be
+    fixed from evidence instead of silently swallowing callback exceptions.
+    """
+    import logging
+
+    error = event.exception
+    logging.error(
+        "Unhandled Telegram update error",
+        exc_info=(type(error), error, error.__traceback__),
+    )
+
+    update = event.update
+    callback = getattr(update, "callback_query", None)
+    if callback:
+        try:
+            await callback.answer(
+                "خطای داخلی هنگام اجرای این دکمه رخ داد. لطفاً دوباره تلاش کن؛ جزئیات خطا در گزارش اجرای ربات ثبت شد.",
+                show_alert=True,
+            )
+        except Exception:
+            logging.exception("Could not acknowledge failed callback query")
+        return True
+
+    message = getattr(update, "message", None)
+    if message:
+        try:
+            await message.answer("خطای داخلی هنگام اجرای درخواست رخ داد. جزئیات خطا در گزارش اجرای ربات ثبت شد.")
+        except Exception:
+            logging.exception("Could not send update error message")
+    return True
