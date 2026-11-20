@@ -15,18 +15,23 @@ from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_me
 router = Router()
 
 def _is_admin_actor(user_id: int | None, chat, cfg) -> bool:
-    # Admin access requires BOTH the configured owner account and the one
-    # explicitly configured administration group. Being the owner in a
-    # private chat or any castle/player group must never expose the admin UI.
-    return bool(
-        user_id
-        and cfg.bot_owner_id
-        and user_id == cfg.bot_owner_id
-        and chat
-        and chat.type in ("group", "supergroup")
-        and cfg.admin_chat_id
-        and chat.id == cfg.admin_chat_id
-    )
+    # BOT_OWNER_ID is the global superuser identity, independent of chat.
+    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id)
+
+
+async def get_actor_lord(session, user_id: int, group):
+    """Resolve the castle lord for a player or the owner acting as superuser."""
+    if not group:
+        return None
+    cfg = get_settings()
+    if cfg.bot_owner_id and user_id == cfg.bot_owner_id:
+        return await session.scalar(select(Lord).where(
+            Lord.castle_id == group.castle_id, Lord.status == "active"
+        ))
+    lord = await get_lord(session, user_id)
+    if not lord:
+        return None
+    return lord
 
 async def _safe_edit_text(message, text: str, reply_markup=None):
     try:
@@ -167,9 +172,9 @@ async def profile(message: Message, session_factory):
     async with session_factory() as session:
         group = await require_registered_group(message, session)
         if not group: return
-        lord = await get_lord(session, message.from_user.id)
+        lord = await get_actor_lord(session, message.from_user.id, group)
         castle = await session.get(Castle, group.castle_id)
-        if not lord or lord.castle_id != group.castle_id:
+        if not lord:
             await message.answer("در این گروه لرد نیستی."); return
         balances = await get_balances(session, lord.id)
     lines = [f"🏰 {castle.name}", f"👑 {lord.display_name}", "", "منابع:"]
@@ -187,8 +192,8 @@ async def trade(message: Message, bot, session_factory):
         async with session_factory() as session, session.begin():
             group = await require_registered_group(message, session)
             if not group: return
-            lord = await get_lord(session, message.from_user.id)
-            if not lord or lord.castle_id != group.castle_id:
+            lord = await get_actor_lord(session, message.from_user.id, group)
+            if not lord:
                 raise ValueError("در این گروه لرد نیستی.")
             offer = await create_trade(session, lord, recipient_id, offered_resource, offered_amount, requested_resource, requested_amount)
             recipient = await get_lord(session, recipient_id)
@@ -205,8 +210,8 @@ async def offers(message: Message, session_factory):
     async with session_factory() as session:
         group = await require_registered_group(message, session)
         if not group: return
-        lord = await get_lord(session, message.from_user.id)
-        if not lord or lord.castle_id != group.castle_id:
+        lord = await get_actor_lord(session, message.from_user.id, group)
+        if not lord:
             await message.answer("در این گروه لرد نیستی."); return
         rows = (await session.scalars(select(TradeOffer).where(TradeOffer.recipient_lord_id == lord.id, TradeOffer.status == "pending").order_by(TradeOffer.id.desc()).limit(20))).all()
     if not rows:
@@ -222,8 +227,8 @@ async def trade_history_cmd(message: Message, session_factory):
         group = await require_registered_group(message, session)
         if not group:
             return
-        lord = await get_lord(session, message.from_user.id)
-        if not lord or lord.castle_id != group.castle_id:
+        lord = await get_actor_lord(session, message.from_user.id, group)
+        if not lord:
             await message.answer("در این گروه لرد نیستی.")
             return
         rows = (await session.scalars(
@@ -266,11 +271,13 @@ async def trade_callback(call: CallbackQuery, bot, session_factory):
         return
     try:
         async with session_factory() as session, session.begin():
-            recipient_before = await get_lord(session, call.from_user.id)
             group = await get_group(session, call.message.chat.id) if call.message and call.message.chat else None
-            if not recipient_before or not group or recipient_before.castle_id != group.castle_id:
-                raise ValueError("این پیشنهاد فقط در گروه قلعه مقصد قابل پاسخ‌گویی است.")
-            offer = await resolve_trade(session, int(offer_id), call.from_user.id, action == "accept")
+            recipient_before = await get_actor_lord(session, call.from_user.id, group)
+            if not recipient_before:
+                raise ValueError("برای این قلعه لرد فعالی ثبت نشده یا این حساب دسترسی ندارد.")
+            offer = await resolve_trade(
+                session, int(offer_id), recipient_before.telegram_user_id, action == "accept"
+            )
             await audit(session, call.from_user.id, f"trade_{offer.status}", str(offer.id))
             sender = await session.get(Lord, offer.sender_lord_id)
             recipient = await session.get(Lord, offer.recipient_lord_id)
@@ -302,8 +309,8 @@ async def cancel_own_trade_offer(message: Message, session_factory):
             group = await require_registered_group(message, session)
             if not group:
                 return
-            lord = await get_lord(session, message.from_user.id)
-            if not lord or lord.castle_id != group.castle_id:
+            lord = await get_actor_lord(session, message.from_user.id, group)
+            if not lord:
                 raise ValueError("در این گروه لرد نیستی.")
             offer = await cancel_trade(session, offer_id, message.from_user.id)
             await audit(session, message.from_user.id, "trade_offer_cancelled", str(offer.id))
@@ -417,8 +424,8 @@ async def buildings_cmd(message: Message, session_factory):
     async with session_factory() as session:
         group=await require_registered_group(message,session)
         if not group: return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی."); return
         castle=await session.get(Castle,group.castle_id)
         rows=(await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id==castle.id).order_by(ProductionLevel.production_key))).all()
         camps=(await session.scalars(select(CampLevel).where(CampLevel.castle_id==castle.id))).all()
@@ -446,13 +453,10 @@ async def upgrade_prompt(call: CallbackQuery, session_factory):
         return
     _, category, key = parts
     async with session_factory() as session:
-        lord = await get_lord(session, call.from_user.id)
-        if not lord:
-            await call.answer("برای این حساب لردی ثبت نشده است.", show_alert=True)
-            return
         group = await get_group(session, call.message.chat.id)
-        if not group or group.castle_id != lord.castle_id:
-            await call.answer("این عملیات فقط در گروه قلعه اختصاص‌یافته به لرد مجاز است.", show_alert=True)
+        lord = await get_actor_lord(session, call.from_user.id, group)
+        if not lord:
+            await call.answer("این قلعه لرد فعال ندارد یا دسترسی شما مجاز نیست.", show_alert=True)
             return
         castle = await session.get(Castle, lord.castle_id)
         if category == "production":
@@ -503,12 +507,10 @@ async def upgrade_confirm(call: CallbackQuery, session_factory):
     _, category, key = parts
     try:
         async with session_factory() as session, session.begin():
-            lord = await get_lord(session, call.from_user.id)
-            if not lord:
-                raise ValueError("برای این حساب لردی ثبت نشده است.")
             group = await get_group(session, call.message.chat.id)
-            if not group or group.castle_id != lord.castle_id:
-                raise ValueError("این عملیات فقط در گروه قلعه اختصاص‌یافته به لرد مجاز است.")
+            lord = await get_actor_lord(session, call.from_user.id, group)
+            if not lord:
+                raise ValueError("این قلعه لرد فعال ندارد یا دسترسی شما مجاز نیست.")
             castle = await session.get(Castle, lord.castle_id)
             level, definition = await engine_upgrade(session, lord, category, key)
             await audit(session, call.from_user.id, "building_upgraded", str(lord.castle_id), f"{category}:{key}:{level}")
@@ -530,8 +532,8 @@ async def upgrade_cmd(message: Message, session_factory):
         if not group:
             await message.answer("این گروه به قلعه متصل نیست.")
             return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id:
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord:
             await message.answer("در این گروه لرد نیستی.")
             return
         try:
@@ -547,8 +549,8 @@ async def army_cmd(message: Message, session_factory):
     async with session_factory() as session:
         group=await require_registered_group(message,session)
         if not group: return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی."); return
         rows=(await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id==group.castle_id).order_by(ArmyUnit.unit_key))).all()
         equipment=(await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id==group.castle_id))).all()
         fleet=(await session.scalars(select(FleetShip).where(FleetShip.castle_id==group.castle_id))).all()
@@ -564,8 +566,8 @@ async def economy_cmd(message: Message, session_factory):
     async with session_factory() as session:
         group=await require_registered_group(message,session)
         if not group: return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی."); return
         balances=await get_balances(session,lord.id)
         state=await session.get(CastleEconomyState,group.castle_id)
     lines=["📊 اقتصاد قلعه"]+[f"{RESOURCE_LABELS.get(k,k)}: {v:,.0f}" for k,v in balances.items()]
@@ -579,8 +581,8 @@ async def workshop_cmd(message: Message, session_factory):
     async with session_factory() as session, session.begin():
         group=await get_group(session,message.chat.id)
         if not group: await message.answer("این گروه به قلعه متصل نیست."); return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی."); return
         state=await session.get(CastleEconomyState,group.castle_id)
         if (message.text or "").strip().lower()=="/workshop upgrade":
             try: level=await upgrade_workshop(session,lord)
@@ -596,8 +598,8 @@ async def equipment_cmd(message: Message, session_factory):
     async with session_factory() as session, session.begin():
         group=await get_group(session,message.chat.id)
         if not group: await message.answer("این گروه به قلعه متصل نیست."); return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی."); return
         try: definition,count=await build_equipment(session,lord,parts[1])
         except ValueError as e: await message.answer(str(e)); return
     await message.answer(f"✅ {definition['label']} ساخته شد. موجودی: {count}")
@@ -609,8 +611,8 @@ async def port_cmd(message: Message, session_factory):
     async with session_factory() as session, session.begin():
         group=await get_group(session,message.chat.id)
         if not group: await message.answer("این گروه به قلعه متصل نیست."); return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی."); return
         try: level=await upgrade_port(session,lord)
         except ValueError as e: await message.answer(str(e)); return
     await message.answer(f"⚓ اسکله به سطح {level}/15 ارتقا یافت.")
@@ -642,8 +644,8 @@ async def march_cmd(message: Message, session_factory, bot):
         async with session_factory() as session, session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id: raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord: raise ValueError("در این گروه لرد نیستی.")
             war=await launch_expedition(session,lord,target,kind,int(minutes_s),assets)
             await audit(session,message.from_user.id,"war_expedition_launched",str(war.id),f"target={target};type={kind}")
             origin=await session.get(Castle,war.origin_castle_id);dest=await session.get(Castle,war.target_castle_id)
@@ -656,8 +658,8 @@ async def arrivals_cmd(message: Message, session_factory):
     async with session_factory() as session, session.begin():
         group=await require_registered_group(message,session)
         if not group:return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی.");return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی.");return
         await arrive_expeditions(session)
         rows=(await session.scalars(select(WarExpedition).where(WarExpedition.attacker_lord_id==lord.id,WarExpedition.status=="arrived").order_by(WarExpedition.id.desc()))).all()
     if not rows: await message.answer("لشکر رسیده‌ای نداری.");return
@@ -671,8 +673,8 @@ async def arrival_choice_cmd(message: Message, session_factory):
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id: raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord: raise ValueError("در این گروه لرد نیستی.")
             await arrive_expeditions(session)
             row=await set_arrival_choice(session,int(p[1]),lord,p[2])
         await message.answer(f"انتخاب لشکر #{row.id} ثبت شد: {p[2]}")
@@ -686,8 +688,8 @@ async def war_command_cmd(message: Message, session_factory):
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id: raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord: raise ValueError("در این گروه لرد نیستی.")
             row=await issue_war_command(session,int(p[1]),lord,p[2])
         await message.answer(f"دستور {p[2]} برای لشکر #{row.id} ثبت شد.")
     except (ValueError,TypeError) as e: await message.answer(str(e))
@@ -700,8 +702,8 @@ async def scenario_cmd(message: Message, session_factory):
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id: raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord: raise ValueError("در این گروه لرد نیستی.")
             item=await submit_scenario(session,int(p[1]),lord,p[2])
         await message.answer(f"سناریوی نبرد #{item.expedition_id} ثبت شد.")
     except (ValueError,TypeError) as e: await message.answer(str(e))
@@ -711,8 +713,8 @@ async def alliances_cmd(message: Message, session_factory):
     async with session_factory() as session:
         group=await require_registered_group(message,session)
         if not group:return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی.");return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی.");return
         candidates=(await session.scalars(select(MilitaryAlliance).where(
             MilitaryAlliance.status=="pending",
             (MilitaryAlliance.owner_a_lord_id==lord.id) | (MilitaryAlliance.owner_b_lord_id==lord.id)
@@ -736,8 +738,8 @@ async def alliance_response_cmd(message: Message, session_factory):
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id: raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord: raise ValueError("در این گروه لرد نیستی.")
             row=await answer_alliance(session,int(p[1]),lord,p[2]=="accept")
         await message.answer(f"درخواست اتحاد #{row.id}: {row.status}")
     except (ValueError,TypeError) as e: await message.answer(str(e))
@@ -747,8 +749,8 @@ async def transfers_cmd(message: Message, session_factory):
     async with session_factory() as session:
         group=await require_registered_group(message,session)
         if not group:return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی.");return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی.");return
         rows=(await session.scalars(select(TroopTransferRequest).where(TroopTransferRequest.receiver_lord_id==lord.id,TroopTransferRequest.status=="pending"))).all()
     await message.answer("درخواست‌های انتقال:\n"+"\n".join(f"#{x.id}: /transfer {x.id} accept|reject" for x in rows) if rows else "درخواست انتقالی نداری.")
 
@@ -760,8 +762,8 @@ async def transfer_response_cmd(message: Message, session_factory):
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id: raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord: raise ValueError("در این گروه لرد نیستی.")
             row=await answer_transfer(session,int(p[1]),lord,p[2]=="accept")
         await message.answer(f"درخواست انتقال #{row.id}: {row.status}")
     except (ValueError,TypeError) as e: await message.answer(str(e))
@@ -807,8 +809,8 @@ async def trade_pack_cmd(message: Message, bot, session_factory):
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id: raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord: raise ValueError("در این گروه لرد نیستی.")
             offer=await create_trade_bundle(session,lord,recipient_id,offered,requested)
             recipient=await get_lord(session,recipient_id)
             await audit(session,message.from_user.id,"trade_bundle_created",str(offer.id))
@@ -849,8 +851,8 @@ async def cancel_march_cmd(message: Message, session_factory):
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id: raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord: raise ValueError("در این گروه لرد نیستی.")
             row=await cancel_expedition(session,int(p[1]),lord)
             await audit(session,message.from_user.id,"war_expedition_cancelled",str(row.id))
         await message.answer(f"لشکرکشی #{row.id} لغو شد و دارایی‌ها به قلعه مبدأ برگشتند.")
@@ -883,8 +885,8 @@ async def garrisons_cmd(message: Message, session_factory):
     async with session_factory() as session:
         group=await require_registered_group(message,session)
         if not group:return
-        lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی.");return
+        lord=await get_actor_lord(session, message.from_user.id, group)
+        if not lord: await message.answer("در این گروه لرد نیستی.");return
         rows=(await session.scalars(select(GarrisonAsset).where(GarrisonAsset.owner_lord_id==lord.id,GarrisonAsset.count>0).order_by(GarrisonAsset.castle_id,GarrisonAsset.asset_kind,GarrisonAsset.asset_key))).all()
         castles={x.id:x.name for x in (await session.scalars(select(Castle))).all()}
     if not rows: await message.answer("پادگان متعلق به تو خالی است.");return
@@ -910,8 +912,8 @@ async def march_garrison_cmd(message: Message, session_factory, bot):
         async with session_factory() as session,session.begin():
             group=await require_registered_group(message,session)
             if not group:return
-            lord=await get_lord(session,message.from_user.id)
-            if not lord or lord.castle_id!=group.castle_id:raise ValueError("در این گروه لرد نیستی.")
+            lord=await get_actor_lord(session, message.from_user.id, group)
+            if not lord:raise ValueError("در این گروه لرد نیستی.")
             from bot.database.models import GarrisonAsset
             owns=await session.scalar(select(GarrisonAsset.id).where(GarrisonAsset.owner_lord_id==lord.id,GarrisonAsset.castle_id==source_id).limit(1))
             if not owns:raise ValueError("در این قلعه پادگان متعلق به تو پیدا نشد.")
