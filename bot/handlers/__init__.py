@@ -14,14 +14,15 @@ from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_me
 
 router = Router()
 
-def _is_admin_actor(user_id: int | None, chat, cfg) -> bool:
-    # Admin access requires BOTH the configured owner account and the one
-    # explicitly configured administration group. Being the owner in a
-    # private chat or any castle/player group must never expose the admin UI.
+def _is_admin_actor(user_id: int | None, chat=None, cfg=None) -> bool:
+    """Authorize the superuser globally by Telegram identity."""
+    return bool(user_id and cfg and cfg.bot_owner_id and user_id == cfg.bot_owner_id)
+
+
+def _is_admin_panel_chat(user_id: int | None, chat, cfg) -> bool:
+    """Only render the automatic admin panel in the configured admin group."""
     return bool(
-        user_id
-        and cfg.bot_owner_id
-        and user_id == cfg.bot_owner_id
+        _is_admin_actor(user_id, chat, cfg)
         and chat
         and chat.type in ("group", "supergroup")
         and cfg.admin_chat_id
@@ -67,7 +68,7 @@ async def require_registered_group(message: Message, session):
 @router.message(CommandStart())
 async def start(message: Message, session_factory):
     cfg = get_settings()
-    if _is_admin_actor(message.from_user.id if message.from_user else None, message.chat, cfg):
+    if _is_admin_panel_chat(message.from_user.id if message.from_user else None, message.chat, cfg):
         from bot.handlers.ui import _admin_panel_text
         await message.answer(
             await _admin_panel_text(session_factory),
