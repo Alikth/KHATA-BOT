@@ -368,7 +368,7 @@ async def admin_menu_callback(call: CallbackQuery, session_factory):
                 body = "🧾 <b>گزارش عملیات</b>\n" + ("\n".join(f"#{x.id} | {x.actor_telegram_id} | {escape(x.action)} | {escape(x.target_id or '-')}" for x in rows) or "گزارشی ثبت نشده است.")
             else:
                 body = ("🛠 <b>فرمان‌های مدیریتی</b>\n"
-                    "/registercastle نام | منطقه | خاندان | sea یا land — ثبت گروه قلعه"\n"
+                    "/registercastle نام | منطقه | خاندان | sea یا land — ثبت گروه قلعه\n"
                     "Reply به پیام بازیکن + set lord — تعیین لرد\n"
                     "/setresource شناسه منبع مقدار — تغییر منابع\n"
                     "/setasset شناسه_قلعه نوع کلید مقدار — تغییر دارایی\n"
