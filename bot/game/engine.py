@@ -299,8 +299,9 @@ async def build_equipment(session: AsyncSession, lord: Lord, key: str):
 
 async def upgrade_port(session: AsyncSession, lord: Lord):
     await ensure_castle_not_under_siege(session, lord.castle_id)
+    castle=await session.get(Castle,lord.castle_id)
     econ=await session.get(CastleEconomyState,lord.castle_id,with_for_update=True)
-    if not castle.is_coastal or not econ or not econ.port_enabled: raise ValueError("این قلعه ساحلی/دریایی نیست یا بندر فعالی ندارد.")
+    if not castle or not castle.is_coastal or not econ or not econ.port_enabled: raise ValueError("این قلعه ساحلی/دریایی نیست یا بندر فعالی ندارد.")
     if econ.port_level>=15: raise ValueError("اسکله به حداکثر سطح ۱۵ رسیده است.")
     await _spend(session,lord.id,{"coins":1500,"wood":1000}); econ.port_level+=1
     return econ.port_level
