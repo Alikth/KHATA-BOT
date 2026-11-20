@@ -1,6 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from bot.database.models import Lord, ResourceBalance, TradeOffer, AdminAuditLog, GameState, Castle, GroupRegistration
+from bot.database.models import Lord, ResourceBalance, TradeOffer, AdminAuditLog, GameState, Castle, GroupRegistration, FleetShip, CastleEconomyState
 from bot.game.engine import initialize_castle, STARTING_RESOURCES, CATALOG
 
 # Resource names follow the source website's game-rules.js vocabulary.
@@ -44,6 +44,15 @@ async def create_castle_group(session: AsyncSession, chat_id: int, title: str, c
         castle.house = house
         castle.is_coastal = bool(is_coastal)
         castle.active = True
+        if not is_coastal:
+            economy = await session.get(CastleEconomyState, castle.id)
+            if economy:
+                economy.port_enabled = False
+            ships = (await session.scalars(
+                select(FleetShip).where(FleetShip.castle_id == castle.id)
+            )).all()
+            for ship in ships:
+                ship.count = 0
     else:
         castle = Castle(name=castle_name, region=region, house=house, is_coastal=bool(is_coastal))
         session.add(castle)
