@@ -753,19 +753,45 @@ async def admin_ui(call:CallbackQuery,session_factory,state:FSMContext,bot):
             await call.answer();return
         if action[0]=="resetscenario" and len(action)==2:
             expedition_id=int(action[1])
+            async with session_factory() as session:
+                battle=await session.get(WarExpedition,expedition_id)
+                if not battle or battle.status!="resolving" or battle.command!="attack" or not battle.scenario_deadline_at:
+                    raise ValueError("نبرد فعالی برای ریست مهلت سناریو پیدا نشد.")
+                attacker=await session.get(Lord,battle.attacker_lord_id)
+                defender=await session.scalar(select(Lord).where(Lord.castle_id==battle.target_castle_id,Lord.status=="active"))
+            participants=[lord for lord in (attacker,defender) if lord]
+            rows=[[InlineKeyboardButton(
+                text=f"📜 {lord.display_name} — ریست مهلت سناریو",
+                callback_data=f"adminui:resetscenario:{expedition_id}:{lord.id}"
+            )] for lord in participants]
+            rows.append([InlineKeyboardButton(text="↩️ بازگشت",callback_data="adminui:deadlines")])
+            await call.message.edit_text(f"مهلت سناریوی کدام بازیکن در نبرد #{expedition_id} ریست شود؟",reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await call.answer();return
+        if action[0]=="resetscenario" and len(action)==3:
+            expedition_id=int(action[1]); lord_id=int(action[2])
             async with session_factory() as session,session.begin():
                 battle=await session.scalar(select(WarExpedition).where(WarExpedition.id==expedition_id).with_for_update())
-                if not battle or battle.status!="resolving" or battle.command!="attack":
+                lord=await session.get(Lord,lord_id)
+                if not battle or battle.status!="resolving" or battle.command!="attack" or not battle.scenario_deadline_at:
                     raise ValueError("نبرد فعالی برای ریست مهلت سناریو پیدا نشد.")
+                defender=await session.scalar(select(Lord).where(Lord.castle_id==battle.target_castle_id,Lord.status=="active"))
+                if not lord or lord.status!="active" or lord.id not in {battle.attacker_lord_id, defender.id if defender else None}:
+                    raise ValueError("این لرد در نبرد انتخاب‌شده شرکت ندارد.")
                 from bot.game.engine import advance_world_clock
                 controls=await get_controls(session)
                 now=await advance_world_clock(session)
-                before=battle.scenario_deadline_at.isoformat() if battle.scenario_deadline_at else None
-                battle.scenario_deadline_at=now+timedelta(hours=int(controls["scenario_deadline_hours"]))
-                await audit(session,call.from_user.id,"admin_scenario_deadline_reset",str(battle.id),f"{before} -> {battle.scenario_deadline_at.isoformat()}")
-                new_deadline=battle.scenario_deadline_at
+                new_deadline=now+timedelta(hours=int(controls["scenario_deadline_hours"]))
+                override_row=await session.get(GameSetting,"scenario_deadline_overrides",with_for_update=True)
+                overrides=dict(override_row.value or {}) if override_row and isinstance(override_row.value,dict) else {}
+                key=f"{expedition_id}:{lord.id}"
+                before=overrides.get(key)
+                overrides[key]=new_deadline.isoformat()
+                if override_row: override_row.value=overrides
+                else: session.add(GameSetting(key="scenario_deadline_overrides",value=overrides))
+                await audit(session,call.from_user.id,"admin_scenario_deadline_reset",f"{expedition_id}:{lord.id}",f"{before or battle.scenario_deadline_at.isoformat()} -> {new_deadline.isoformat()}")
+                lord_name=lord.display_name
             await call.message.edit_text(
-                f"مهلت سناریوی نبرد #{expedition_id} ریست شد.\\nمهلت جدید: {new_deadline:%Y-%m-%d %H:%M UTC}",
+                f"مهلت سناریوی {escape(lord_name)} در نبرد #{expedition_id} ریست شد.\\nمهلت جدید: {new_deadline:%Y-%m-%d %H:%M UTC}",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="↩️ مدیریت زمان‌بندی‌ها",callback_data="adminui:deadlines")]])
             )
             await call.answer();return
