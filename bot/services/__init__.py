@@ -34,9 +34,19 @@ async def create_castle_group(session: AsyncSession, chat_id: int, title: str, c
         raise ValueError("این گروه قبلاً به یک قلعه متصل شده است.")
     castle = await session.scalar(select(Castle).where(Castle.name == castle_name))
     if castle:
-        raise ValueError("این قلعه قبلاً به گروه دیگری اختصاص داده شده است.")
-    castle = Castle(name=castle_name, region=region, house=house, is_coastal=bool(is_coastal))
-    session.add(castle)
+        existing_group = await session.scalar(
+            select(GroupRegistration).where(GroupRegistration.castle_id == castle.id)
+        )
+        if existing_group:
+            raise ValueError("این قلعه قبلاً به گروه دیگری اختصاص داده شده است.")
+        # Canonical map rows may exist before a player group is registered.
+        castle.region = region
+        castle.house = house
+        castle.is_coastal = bool(is_coastal)
+        castle.active = True
+    else:
+        castle = Castle(name=castle_name, region=region, house=house, is_coastal=bool(is_coastal))
+        session.add(castle)
     await session.flush()
     group = GroupRegistration(telegram_chat_id=chat_id, title=title[:255], chat_type="supergroup", castle_id=castle.id, registered_by_telegram_id=owner_id)
     session.add(group)
