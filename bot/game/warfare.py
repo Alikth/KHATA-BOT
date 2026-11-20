@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import (Castle, Lord, WarExpedition, ArmyUnit, EquipmentItem,
-    FleetShip, GarrisonAsset, MilitaryAlliance, WarScenario, TroopTransferRequest, CastleEconomyState, GameState)
+    FleetShip, GarrisonAsset, MilitaryAlliance, WarScenario, TroopTransferRequest, CastleEconomyState, GameState, GameSetting)
 
 ASSET_MODELS = {"army": (ArmyUnit, "unit_key"), "equipment": (EquipmentItem, "item_key"), "fleet": (FleetShip, "ship_key")}
 
@@ -218,9 +218,13 @@ async def submit_scenario(session: AsyncSession, expedition_id: int, lord: Lord,
         raise ValueError("برای این نبرد امکان ارسال سناریو وجود ندارد.")
     from bot.game.engine import advance_world_clock
     now=await advance_world_clock(session)
-    if now>=row.scenario_deadline_at: raise ValueError("مهلت ارسال سناریو تمام شده است.")
     side="attacker" if lord.id==row.attacker_lord_id else "defender" if lord.castle_id==row.target_castle_id else None
     if not side: raise ValueError("تو در این نبرد مهاجم یا مدافع نیستی.")
+    overrides_row=await session.get(GameSetting,"scenario_deadline_overrides")
+    overrides=overrides_row.value if overrides_row and isinstance(overrides_row.value,dict) else {}
+    override_value=overrides.get(f"{row.id}:{lord.id}")
+    deadline=datetime.fromisoformat(override_value) if override_value else row.scenario_deadline_at
+    if now>=deadline: raise ValueError("مهلت ارسال سناریو تمام شده است.")
     if not text.strip() or len(text)>8000: raise ValueError("متن سناریو باید بین ۱ تا ۸۰۰۰ نویسه باشد.")
     existing=await session.scalar(select(WarScenario).where(WarScenario.expedition_id==row.id,WarScenario.lord_id==lord.id))
     if existing: raise ValueError("برای این نبرد قبلاً سناریو فرستاده‌ای.")
