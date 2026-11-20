@@ -38,10 +38,9 @@ class UIFlow(StatesGroup):
     admin_deadlines = State()
 
 
-def _admin(user_id, chat, cfg):
-    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id and chat
-                and chat.type in ("group", "supergroup") and cfg.admin_chat_id
-                and chat.id == cfg.admin_chat_id)
+def _admin(user_id, chat=None, cfg=None):
+    """Admin actions require the configured owner identity, not a specific chat."""
+    return bool(user_id and cfg and cfg.bot_owner_id and user_id == cfg.bot_owner_id)
 
 
 async def _player(session, user_id, chat_id):
