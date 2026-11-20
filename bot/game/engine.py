@@ -246,7 +246,7 @@ async def weekly_settlement(session: AsyncSession, force: bool=False):
                 unit=await session.scalar(select(ArmyUnit).where(ArmyUnit.castle_id==castle.id,ArmyUnit.unit_key==key).with_for_update())
                 if unit: unit.count+=amount
                 else: session.add(ArmyUnit(castle_id=castle.id,unit_key=key,count=amount))
-        if not under_siege and econ.port_enabled and econ.port_level>0:
+        if not under_siege and castle.is_coastal and econ.port_enabled and econ.port_level>0:
             for ship_key in ("transport","warship"):
                 ship=await session.scalar(select(FleetShip).where(FleetShip.castle_id==castle.id,FleetShip.ship_key==ship_key).with_for_update())
                 if ship: ship.count+=econ.port_level
