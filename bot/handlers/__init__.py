@@ -149,18 +149,22 @@ async def register_castle(message: Message, session_factory):
     cfg = get_settings()
     if not message.from_user or message.from_user.id != cfg.bot_owner_id:
         await message.answer("فقط مالک اصلی می‌تواند گروه قلعه را ثبت کند."); return
-    # /registercastle Castle Name | Region | House
+    # /registercastle Castle Name | Region | House | sea|land
     raw = (message.text or "").partition(" ")[2]
     parts = [x.strip() for x in raw.split("|")]
-    if len(parts) != 3 or not all(parts):
-        await message.answer("فرمت: /registercastle نام قلعه | منطقه | خاندان"); return
+    if len(parts) != 4 or not all(parts):
+        await message.answer("فرمت: /registercastle نام قلعه | منطقه | خاندان | sea یا land"); return
+    coastal_value = parts[3].casefold()
+    if coastal_value not in {"sea", "coastal", "دریایی", "ساحلی", "land", "خشکی"}:
+        await message.answer("نوع موقعیت باید sea/دریایی یا land/خشکی باشد."); return
+    is_coastal = coastal_value in {"sea", "coastal", "دریایی", "ساحلی"}
     async with session_factory() as session, session.begin():
         try:
-            castle, _ = await create_castle_group(session, message.chat.id, message.chat.title or "Castle Group", parts[0], parts[1], parts[2], cfg.bot_owner_id)
+            castle, _ = await create_castle_group(session, message.chat.id, message.chat.title or "Castle Group", parts[0], parts[1], parts[2], cfg.bot_owner_id, is_coastal=is_coastal)
             await audit(session, cfg.bot_owner_id, "castle_group_registered", str(castle.id), f"chat_id={message.chat.id}")
         except ValueError as exc:
             await message.answer(str(exc)); return
-    await message.answer(f"✅ گروه به قلعه متصل شد.\n🏰 {castle.name}\n🗺 {castle.region}\n🏠 {castle.house}\nاکنون می‌توانی با Reply به بازیکن و دستور set lord، لرد را تعیین کنی.")
+    await message.answer(f"✅ گروه به قلعه متصل شد.\n🏰 {castle.name}\n🗺 {castle.region}\n🏠 {castle.house}\n🌊 موقعیت: {'دریایی/ساحلی' if castle.is_coastal else 'خشکی'}\nاکنون می‌توانی با Reply به بازیکن و دستور set lord، لرد را تعیین کنی.")
 
 @router.message(Command("profile"))
 async def profile(message: Message, session_factory):
@@ -344,7 +348,7 @@ async def admin_menu_callback(call: CallbackQuery, session_factory):
                 body = f"📊 <b>وضعیت جهان</b>\nساعت جهان: {'متوقف' if paused else 'فعال'}\n" + "\n".join(counts)
             elif action == "castles":
                 rows = (await session.scalars(select(Castle).order_by(Castle.region, Castle.name).limit(80))).all()
-                body = "🏰 <b>قلعه‌ها</b>\n" + ("\n".join(f"#{x.id} {escape(x.name)} | {escape(x.region)} | {escape(x.house)} | {'فعال' if x.active else 'غیرفعال'}" for x in rows) or "قلعه‌ای ثبت نشده است.")
+                body = "🏰 <b>قلعه‌ها</b>\n" + ("\n".join(f"#{x.id} {escape(x.name)} | {escape(x.region)} | {escape(x.house)} | {'دریایی' if x.is_coastal else 'خشکی'} | {'فعال' if x.active else 'غیرفعال'}" for x in rows) or "قلعه‌ای ثبت نشده است.")
             elif action == "lords":
                 rows = (await session.scalars(select(Lord).order_by(Lord.id.desc()).limit(80))).all()
                 body = "👑 <b>لردها</b>\n" + ("\n".join(f"#{x.id} {escape(x.display_name)} | تلگرام <code>{x.telegram_user_id}</code> | قلعه {x.castle_id} | {x.status}" for x in rows) or "لردی ثبت نشده است.")
@@ -363,7 +367,7 @@ async def admin_menu_callback(call: CallbackQuery, session_factory):
                 body = "🧾 <b>گزارش عملیات</b>\n" + ("\n".join(f"#{x.id} | {x.actor_telegram_id} | {escape(x.action)} | {escape(x.target_id or '-')}" for x in rows) or "گزارشی ثبت نشده است.")
             else:
                 body = ("🛠 <b>فرمان‌های مدیریتی</b>\n"
-                    "/registercastle نام | منطقه | خاندان — ثبت گروه قلعه\n"
+                    "/registercastle نام | منطقه | خاندان | sea یا land — ثبت گروه قلعه"\n"
                     "Reply به پیام بازیکن + set lord — تعیین لرد\n"
                     "/setresource شناسه منبع مقدار — تغییر منابع\n"
                     "/setasset شناسه_قلعه نوع کلید مقدار — تغییر دارایی\n"
@@ -952,7 +956,7 @@ async def admin_help_cmd(message: Message):
         "/setresource شناسه_تلگرام منبع مقدار — تغییر موجودی هر لرد\n"
         "/setasset شناسه_قلعه نوع کلید مقدار — ویرایش دارایی قلعه\n"
         "/setlordcastle شناسه_تلگرام شناسه_قلعه — جابه‌جایی لرد\n"
-        "/setcastleinfo شناسه نام | منطقه | خاندان — ویرایش مشخصات قلعه\\n"
+        "/setcastleinfo شناسه نام | منطقه | خاندان — ویرایش مشخصات قلعه (نوع ساحلی در ثبت تعیین می‌شود)"\\n"
         "/setlordstatus شناسه active|suspended|deleted — مدیریت وضعیت لرد\\n"
         "/canceltrade شناسه — لغو معامله معلق\\n"
         "/adminlogs — آخرین گزارش‌های مدیریتی"
