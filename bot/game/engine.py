@@ -88,8 +88,7 @@ async def initialize_castle(session: AsyncSession, castle: Castle):
     await seed_levels(SpecialCampLevel, "camp_key", {row["key"]:0 for row in SPECIAL_CAMPS.get(castle.region, [])})
     await seed_counts(ArmyUnit, "unit_key", STARTING_ARMY)
     await seed_counts(EquipmentItem, "item_key", {key:0 for key in EQUIPMENT})
-    naval_names={"Eastwatch","Karhold","Seagard","Gulltown","Pyke","Ten Towers","Hammerhorn","Casterly Rock","King's Landing","Dragonstone","Storm's End","Oldtown","Sunspear","Yronwood"}
-    naval = castle.name in naval_names
+    naval = bool(castle.is_coastal)
     await seed_counts(FleetShip, "ship_key", {"transport":1 if naval else 0,"warship":1 if naval else 0})
     economy = await session.get(CastleEconomyState, castle.id)
     if economy is None:
@@ -301,7 +300,7 @@ async def build_equipment(session: AsyncSession, lord: Lord, key: str):
 async def upgrade_port(session: AsyncSession, lord: Lord):
     await ensure_castle_not_under_siege(session, lord.castle_id)
     econ=await session.get(CastleEconomyState,lord.castle_id,with_for_update=True)
-    if not econ or not econ.port_enabled: raise ValueError("این قلعه بندر ندارد.")
+    if not castle.is_coastal or not econ or not econ.port_enabled: raise ValueError("این قلعه ساحلی/دریایی نیست یا بندر فعالی ندارد.")
     if econ.port_level>=15: raise ValueError("اسکله به حداکثر سطح ۱۵ رسیده است.")
     await _spend(session,lord.id,{"coins":1500,"wood":1000}); econ.port_level+=1
     return econ.port_level
