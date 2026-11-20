@@ -10,6 +10,16 @@ from bot.database.models import (Castle, Lord, WarExpedition, ArmyUnit, Equipmen
 
 ASSET_MODELS = {"army": (ArmyUnit, "unit_key"), "equipment": (EquipmentItem, "item_key"), "fleet": (FleetShip, "ship_key")}
 
+def validate_expedition_route(origin: Castle, target: Castle, expedition_type: str) -> None:
+    if expedition_type == "sea":
+        if not origin.is_coastal:
+            raise ValueError("قلعه مبدأ ساحلی/دریایی نیست.")
+        if not target.is_coastal:
+            raise ValueError("قلعه مقصد ساحلی/دریایی نیست.")
+    elif expedition_type != "land":
+        raise ValueError("نوع لشکرکشی باید land یا sea باشد.")
+
+
 def validate_expedition_origin(lord: Lord, origin_castle_id: int, use_garrison: bool) -> None:
     """Prevent a lord from dispatching another castle's public inventory.
 
@@ -66,13 +76,14 @@ async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_nam
     if not target or target.id==origin.id: raise ValueError("قلعه مقصد معتبر نیست.")
     busy=await session.scalar(select(WarExpedition.id).where(WarExpedition.target_castle_id==target.id,WarExpedition.status=="resolving").limit(1))
     if busy: raise ValueError("این قلعه در حال حاضر درگیر نبرد یا محاصره دیگری است.")
+    validate_expedition_route(origin, target, expedition_type)
     if expedition_type=="sea":
         origin_economy=await session.get(CastleEconomyState,origin.id)
         target_economy=await session.get(CastleEconomyState,target.id)
-        if not origin.is_coastal or not origin_economy or not origin_economy.port_enabled:
-            raise ValueError("قلعه مبدأ ساحلی/دریایی نیست یا بندر فعالی ندارد.")
-        if not target.is_coastal or not target_economy or not target_economy.port_enabled:
-            raise ValueError("قلعه مقصد ساحلی/دریایی نیست یا بندر فعالی ندارد؛ مسیر دریایی فقط بین دو قلعه دریایی مجاز است.")
+        if not origin_economy or not origin_economy.port_enabled:
+            raise ValueError("قلعه مبدأ بندر فعالی ندارد.")
+        if not target_economy or not target_economy.port_enabled:
+            raise ValueError("قلعه مقصد بندر فعالی ندارد؛ مسیر دریایی فقط بین دو قلعه دارای بندر فعال مجاز است.")
     clean={k:{} for k in ("army","equipment","fleet")}
     for kind in ("army","equipment","fleet"):
         if expedition_type=="land" and kind=="fleet": continue
