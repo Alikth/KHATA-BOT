@@ -312,7 +312,7 @@ async def cancel_own_trade_offer(message: Message, session_factory):
             lord = await get_actor_lord(session, message.from_user.id, group)
             if not lord:
                 raise ValueError("در این گروه لرد نیستی.")
-            offer = await cancel_trade(session, offer_id, message.from_user.id)
+            offer = await cancel_trade(session, offer_id, lord.telegram_user_id)
             await audit(session, message.from_user.id, "trade_offer_cancelled", str(offer.id))
         await message.answer(f"پیشنهاد تجارت #{offer.id} لغو شد.")
     except (ValueError, TypeError) as exc:
