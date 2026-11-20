@@ -252,7 +252,16 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
             buttons = [[InlineKeyboardButton(text="⚔️ لشکرکشی زمینی", callback_data="ui:war:new")],
                        [InlineKeyboardButton(text="🎭 لشکرکشی نمایشی (هفته‌ای یک‌بار)", callback_data="ui:war:fake")]]
             econ = await session.get(CastleEconomyState, castle.id)
-            if econ and econ.port_enabled:
+            sea_origin_available = bool(castle.is_coastal and econ and econ.port_enabled)
+            if not sea_origin_available:
+                sea_origin_available = bool(await session.scalar(
+                    select(GarrisonAsset.id).join(Castle, Castle.id==GarrisonAsset.castle_id)
+                    .join(CastleEconomyState, CastleEconomyState.castle_id==Castle.id)
+                    .where(GarrisonAsset.owner_lord_id==lord.id,GarrisonAsset.count>0,
+                           Castle.is_coastal.is_(True),CastleEconomyState.port_enabled.is_(True))
+                    .limit(1)
+                ))
+            if sea_origin_available:
                 buttons.append([InlineKeyboardButton(text="🚢 لشکرکشی دریایی", callback_data="ui:war:sea")])
             rows = (await session.scalars(select(WarExpedition).where(
                 or_(WarExpedition.attacker_lord_id==lord.id,WarExpedition.target_castle_id==castle.id)
