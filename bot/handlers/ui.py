@@ -39,18 +39,25 @@ class UIFlow(StatesGroup):
 
 
 def _admin(user_id, chat, cfg):
-    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id and chat
-                and chat.type in ("group", "supergroup") and cfg.admin_chat_id
-                and chat.id == cfg.admin_chat_id)
+    # Superuser authorization is global and independent of the current chat.
+    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id)
 
 
 async def _player(session, user_id, chat_id):
     group = await get_group(session, chat_id)
-    lord = await get_lord(session, user_id)
     if not group:
         raise ValueError("این گروه به قلعه‌ای متصل نیست.")
-    if not lord or lord.castle_id != group.castle_id:
-        raise ValueError("در این گروه لرد این قلعه نیستی. دسترسی هر قلعه جداگانه با set lord تعیین می‌شود.")
+    cfg = get_settings()
+    if cfg.bot_owner_id and user_id == cfg.bot_owner_id:
+        lord = await session.scalar(select(Lord).where(
+            Lord.castle_id == group.castle_id, Lord.status == "active"
+        ))
+        if not lord:
+            raise ValueError("این قلعه هنوز لرد فعال ندارد؛ ابتدا با Reply به بازیکن دستور set lord را اجرا کن.")
+    else:
+        lord = await get_lord(session, user_id)
+        if not lord or lord.castle_id != group.castle_id:
+            raise ValueError("در این گروه لرد این قلعه نیستی. دسترسی هر قلعه جداگانه با set lord تعیین می‌شود.")
     castle = await session.get(Castle, group.castle_id)
     if not castle or not castle.active:
         raise ValueError("قلعه فعال نیست.")
