@@ -169,7 +169,7 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
                         buttons.append([InlineKeyboardButton(text=f"⬆️ ارتقا {d['label']}", callback_data=f"upgrade:production:{row.production_key}")])
                 buttons.append([InlineKeyboardButton(text="🛠 کارگاه و ادوات", callback_data="ui:workshop")])
                 econ=await session.get(CastleEconomyState,castle.id)
-                if econ and econ.port_enabled:
+                if castle.is_coastal and econ and econ.port_enabled:
                     buttons.append([InlineKeyboardButton(text="⚓ اسکله", callback_data="ui:port")])
                 buttons.append([InlineKeyboardButton(text="↩️ بازگشت", callback_data="menu:back")])
                 markup = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -224,7 +224,7 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
             markup = InlineKeyboardMarkup(inline_keyboard=buttons)
         elif action == "port":
             econ = await session.get(CastleEconomyState, castle.id)
-            enabled = bool(econ and econ.port_enabled)
+            enabled = bool(castle.is_coastal and econ and econ.port_enabled)
             body += f"⚓ <b>اسکله</b>\nوضعیت: {'فعال' if enabled else 'این قلعه بندر ندارد'}\nسطح: {econ.port_level if econ else 0}/15\nتولید هفتگی هر نوع کشتی: {econ.port_level if enabled and econ else 0}\nهزینه ارتقا: 💰 1,500 + 🪵 1,000"
             buttons = []
             if enabled and econ and econ.port_level < 15:
@@ -625,9 +625,9 @@ async def war_final(call:CallbackQuery,state:FSMContext,session_factory,bot):
             origin=await session.get(Castle,row.origin_castle_id)
             target=await session.get(Castle,row.target_castle_id)
         await state.clear()
-        await call.message.edit_text(f"🚩 لشکرکشی #{row.id} ثبت شد\n{castle.name} → {target.name}\nرسیدن برآوردی: {row.arrival_at:%Y-%m-%d %H:%M UTC}\n{'نمایشی؛ دارایی کسر نشد.' if fake else 'دارایی‌ها از موجودی مبدأ کسر شدند.'}")
+        await call.message.edit_text(f"🚩 لشکرکشی #{row.id} ثبت شد\n{origin.name} → {target.name}\nرسیدن برآوردی: {row.arrival_at:%Y-%m-%d %H:%M UTC}\n{'نمایشی؛ دارایی کسر نشد.' if fake else 'دارایی‌ها از موجودی مبدأ کسر شدند.'}")
         await call.answer("ثبت شد")
-        if get_settings().war_log_chat_id: await bot.send_message(get_settings().war_log_chat_id,f"لشکرکشی #{row.id}: {castle.name} → {target.name}")
+        if get_settings().war_log_chat_id: await bot.send_message(get_settings().war_log_chat_id,f"لشکرکشی #{row.id}: {origin.name} → {target.name}")
     except ValueError as exc: await call.answer(str(exc),show_alert=True)
 
 
