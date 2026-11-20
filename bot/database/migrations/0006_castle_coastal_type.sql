@@ -12,11 +12,13 @@ WHERE name IN (
     'Sunspear', 'Yronwood'
 );
 
-UPDATE public.castle_economy_state AS economy
-SET port_enabled = TRUE
+INSERT INTO public.castle_economy_state(
+    castle_id, workshop_level, port_enabled, port_level, food_debt
+)
+SELECT castle.id, 0, TRUE, 0, 0
 FROM public.castles AS castle
-WHERE economy.castle_id = castle.id
-  AND castle.is_coastal = TRUE;
+WHERE castle.is_coastal = TRUE
+ON CONFLICT (castle_id) DO UPDATE SET port_enabled = TRUE;
 
 -- Seed a basic fleet only when a coastal castle has no row for that ship yet.
 INSERT INTO public.castle_fleet(castle_id, ship_key, count)
