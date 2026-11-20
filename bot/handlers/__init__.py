@@ -1046,6 +1046,8 @@ async def admin_set_asset_cmd(message: Message, session_factory, bot):
             castle = await session.get(Castle, castle_id)
             if not castle:
                 raise ValueError("قلعه پیدا نشد.")
+            if kind == "fleet" and amount > 0 and not castle.is_coastal:
+                raise ValueError("قلعه خشکی امکان داشتن یا دریافت کشتی ندارد.")
             condition = getattr(model, key_field) == key
             row = await session.scalar(select(model).where(model.castle_id == castle_id, condition).with_for_update())
             before = getattr(row, value_field) if row else 0
