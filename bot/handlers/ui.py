@@ -693,9 +693,72 @@ async def admin_ui(call:CallbackQuery,session_factory,state:FSMContext,bot):
                 await audit(session,call.from_user.id,"admin_control_changed",field,str(value))
             await call.answer("وضعیت به‌روزرسانی شد.")
             await call.message.edit_text(await _admin_panel_text(session_factory),reply_markup=admin_menu());return
-        if action[0]=="deadlines":
+        if action[0]=="deadlines" and len(action)==1:
+            kb=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✏️ تغییر مدت‌زمان‌ها",callback_data="adminui:deadlines:change")],
+                [InlineKeyboardButton(text="🎲 ریست مهلت رول یک لرد",callback_data="adminui:deadlines:resetroll")],
+                [InlineKeyboardButton(text="📜 ریست مهلت سناریوی یک نبرد",callback_data="adminui:deadlines:resetscenario")],
+                [InlineKeyboardButton(text="↩️ بازگشت به پنل",callback_data="adminui:home")]])
+            await call.message.edit_text("مدیریت زمان‌بندی‌ها\\nتغییر مدت‌زمان‌ها تنظیمات کلی را عوض می‌کند؛ ریست، تایمر مورد انتخاب را از نو فعال می‌کند.",reply_markup=kb)
+            await call.answer();return
+        if action[0]=="deadlines" and len(action)==2 and action[1]=="change":
             await state.set_state(UIFlow.admin_deadlines)
             await call.message.answer("سه عدد را به ترتیب وارد کن: مهلت دستور لشکرکشی به دقیقه، مهلت سناریو به ساعت، فاصله رول به ساعت. نمونه: 90 24 48")
+            await call.answer();return
+        if action[0]=="deadlines" and len(action)==2 and action[1]=="resetroll":
+            async with session_factory() as session:
+                lords=(await session.scalars(select(Lord).where(Lord.status=="active").order_by(Lord.display_name).limit(80))).all()
+            rows=[[InlineKeyboardButton(text=f"🎲 {lord.display_name} — ریست تایمر رول",callback_data=f"adminui:resetroll:{lord.id}")] for lord in lords]
+            rows.append([InlineKeyboardButton(text="↩️ بازگشت",callback_data="adminui:deadlines")])
+            await call.message.edit_text("تایمر رول کدام لرد ریست شود؟",reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await call.answer();return
+        if action[0]=="deadlines" and len(action)==2 and action[1]=="resetscenario":
+            async with session_factory() as session:
+                battles=(await session.scalars(select(WarExpedition).where(
+                    WarExpedition.status=="resolving",WarExpedition.command=="attack",
+                    WarExpedition.scenario_deadline_at.is_not(None)
+                ).order_by(WarExpedition.id.desc()).limit(80))).all()
+                castle_ids={x.origin_castle_id for x in battles} | {x.target_castle_id for x in battles}
+                castles={x.id:x.name for x in (await session.scalars(select(Castle).where(Castle.id.in_(castle_ids)))).all()} if castle_ids else {}
+            rows=[[InlineKeyboardButton(
+                text=f"📜 نبرد #{battle.id}: {castles.get(battle.origin_castle_id,'?')} → {castles.get(battle.target_castle_id,'?')}",
+                callback_data=f"adminui:resetscenario:{battle.id}"
+            )] for battle in battles]
+            rows.append([InlineKeyboardButton(text="↩️ بازگشت",callback_data="adminui:deadlines")])
+            await call.message.edit_text("مهلت سناریوی کدام نبرد از نو محاسبه شود؟",reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await call.answer();return
+        if action[0]=="resetroll" and len(action)==2:
+            lord_id=int(action[1])
+            async with session_factory() as session,session.begin():
+                lord=await session.get(Lord,lord_id)
+                if not lord or lord.status!="active": raise ValueError("لرد فعال پیدا نشد.")
+                row=await session.get(GameSetting,"roll_submissions",with_for_update=True)
+                values=dict(row.value or {}) if row and isinstance(row.value,dict) else {}
+                existed=values.pop(str(lord.id),None) is not None
+                if row: row.value=values
+                await audit(session,call.from_user.id,"admin_roll_timer_reset",str(lord.id),"previous roll cooldown cleared")
+            await call.message.edit_text(
+                f"تایمر رول {escape(lord.display_name)} ریست شد." if existed else f"برای {escape(lord.display_name)} تایمر فعالی ثبت نشده بود.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="↩️ مدیریت زمان‌بندی‌ها",callback_data="adminui:deadlines")]])
+            )
+            await call.answer();return
+        if action[0]=="resetscenario" and len(action)==2:
+            expedition_id=int(action[1])
+            async with session_factory() as session,session.begin():
+                battle=await session.scalar(select(WarExpedition).where(WarExpedition.id==expedition_id).with_for_update())
+                if not battle or battle.status!="resolving" or battle.command!="attack":
+                    raise ValueError("نبرد فعالی برای ریست مهلت سناریو پیدا نشد.")
+                from bot.game.engine import advance_world_clock
+                controls=await get_controls(session)
+                now=await advance_world_clock(session)
+                before=battle.scenario_deadline_at.isoformat() if battle.scenario_deadline_at else None
+                battle.scenario_deadline_at=now+timedelta(hours=int(controls["scenario_deadline_hours"]))
+                await audit(session,call.from_user.id,"admin_scenario_deadline_reset",str(battle.id),f"{before} -> {battle.scenario_deadline_at.isoformat()}")
+                new_deadline=battle.scenario_deadline_at
+            await call.message.edit_text(
+                f"مهلت سناریوی نبرد #{expedition_id} ریست شد.\\nمهلت جدید: {new_deadline:%Y-%m-%d %H:%M UTC}",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="↩️ مدیریت زمان‌بندی‌ها",callback_data="adminui:deadlines")]])
+            )
             await call.answer();return
         if action[0]=="rollback" and len(action)==2:
             offer_id=int(action[1])
