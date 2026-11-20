@@ -203,7 +203,7 @@ async def render_player_section(call: CallbackQuery, session_factory, action: st
             econ = await session.get(CastleEconomyState, castle.id)
             body += f"\n\nکارگاه: {econ.workshop_level if econ else 0}/5\nاسکله: {econ.port_level if econ else 0}/15\n"
             military_buttons=[[InlineKeyboardButton(text="🛠 کارگاه محاصره", callback_data="ui:workshop")]]
-            if econ and econ.port_enabled:
+            if castle.is_coastal and econ and econ.port_enabled:
                 military_buttons[0].append(InlineKeyboardButton(text="⚓ اسکله", callback_data="ui:port"))
             military_buttons.extend([
                 [InlineKeyboardButton(text="🚩 لشکرکشی زمینی", callback_data="ui:war")],
