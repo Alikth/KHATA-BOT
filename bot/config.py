@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True)
     bot_token: str = ""
+    telegram_proxy: str | None = None
     bot_owner_id: int = Field(default=0, ge=0)
     database_url: str = ""
     log_level: str = "INFO"

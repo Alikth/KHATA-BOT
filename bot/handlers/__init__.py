@@ -6,18 +6,28 @@ from sqlalchemy import select
 from decimal import Decimal, InvalidOperation
 from html import escape
 from bot.config import get_settings
-from bot.database.models import Lord, TradeOffer, Castle, ResourceBalance, AdminAuditLog
+from bot.database.models import Lord, TradeOffer, Castle, ResourceBalance, AdminAuditLog, GroupRegistration
 from bot.services import (get_lord, get_group, create_lord, create_castle_group, get_balances,
-                          create_trade, resolve_trade, audit, is_world_paused, set_world_paused,
+                          create_trade, resolve_trade, cancel_trade, audit, is_world_paused, set_world_paused,
                           RESOURCE_NAMES)
 from bot.keyboards import trade_decision, main_menu, section_back_menu, admin_menu
 
 router = Router()
 
-def _is_admin_actor(user_id: int | None, chat, cfg) -> bool:
-    return bool(user_id and cfg.bot_owner_id and user_id == cfg.bot_owner_id
-                and chat and chat.type in ("group", "supergroup")
-                and cfg.admin_chat_id and chat.id == cfg.admin_chat_id)
+def _is_admin_actor(user_id: int | None, chat=None, cfg=None) -> bool:
+    """Authorize the superuser globally by Telegram identity."""
+    return bool(user_id and cfg and cfg.bot_owner_id and user_id == cfg.bot_owner_id)
+
+
+def _is_admin_panel_chat(user_id: int | None, chat, cfg) -> bool:
+    """Only render the automatic admin panel in the configured admin group."""
+    return bool(
+        _is_admin_actor(user_id, chat, cfg)
+        and chat
+        and chat.type in ("group", "supergroup")
+        and cfg.admin_chat_id
+        and chat.id == cfg.admin_chat_id
+    )
 
 async def _safe_edit_text(message, text: str, reply_markup=None):
     try:
@@ -56,12 +66,12 @@ async def require_registered_group(message: Message, session):
     return group
 
 @router.message(CommandStart())
-async def start(message: Message):
+async def start(message: Message, session_factory):
     cfg = get_settings()
-    if _is_admin_actor(message.from_user.id if message.from_user else None, message.chat, cfg):
+    if _is_admin_panel_chat(message.from_user.id if message.from_user else None, message.chat, cfg):
+        from bot.handlers.ui import _admin_panel_text
         await message.answer(
-            "🔐 <b>مرکز فرماندهی KHATA-GAMES</b>\n"
-            "مالک اصلی شناسایی شد. مدیریت جهان از همین گروه و همین پنل انجام می‌شود.",
+            await _admin_panel_text(session_factory),
             reply_markup=admin_menu(),
         )
         return
@@ -79,6 +89,7 @@ async def help_cmd(message: Message, session_factory):
     await message.answer(
         "دستورات گروه قلعه:\n/profile — وضعیت لرد و منابع\n"
         "/trade <telegram_id> <resource> <amount> <resource> <amount> — پیشنهاد تجارت\n"
+        "/canceloffer <offer_id> — لغو پیشنهاد تجارت خودت\n"
         "/offers — پیشنهادهای دریافتی\n"
         "/economy — اقتصاد و بدهی غذا\n/buildings — ساختمان‌ها و کمپ‌ها\n/upgrade — ارتقای تولید یا کمپ\n/army — ارتش، ادوات و ناوگان\n/workshop — کارگاه\n/equipment — ساخت ادوات\n/port — ارتقای اسکله\n"
         "منابع: " + ", ".join(RESOURCE_NAMES.keys()) +
@@ -88,107 +99,22 @@ async def help_cmd(message: Message, session_factory):
 
 @router.callback_query(F.data.startswith("menu:"))
 async def persian_menu_callback(call: CallbackQuery, session_factory):
-    """Render real player data from inline navigation; no command text is emitted."""
-    action = call.data.split(":", 1)[1]
-    await call.answer()
+    """Render the interactive player UI; admin callbacks are handled separately."""
+    action = (call.data or "").split(":", 1)[1]
     if not call.from_user or not call.message:
+        await call.answer()
         return
-
-    cfg = get_settings()
     if action == "back":
-        await _safe_edit_text(call.message, "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.", reply_markup=main_menu())
+        await call.answer()
+        await _safe_edit_text(
+            call.message,
+            "به جهان KHATA-GAMES خوش آمدی. بخش موردنظر را انتخاب کن.",
+            reply_markup=main_menu(),
+        )
         return
-    async with session_factory() as session:
-        lord = await get_lord(session, call.from_user.id)
-        if action in ("assets", "buildings", "camps", "army", "trade", "war") and not lord:
-            await _safe_edit_text(
-                call.message,
-                "برای این حساب هنوز لرد فعالی ثبت نشده است. پس از اتصال حساب به قلعه، اطلاعات بازی از همین منو نمایش داده می‌شود.",
-                reply_markup=main_menu(),
-            )
-            return
-        castle = await session.get(Castle, lord.castle_id) if lord else None
+    from bot.handlers.ui import render_player_section
+    await render_player_section(call, session_factory, action)
 
-        if action == "assets":
-            balances = await get_balances(session, lord.id)
-            lines = [f"👑 پروفایل {escape(lord.display_name)}", f"🏰 {escape(castle.name) if castle else 'قلعه نامشخص'}", "", "📦 دارایی‌ها"]
-            lines.extend(f"{RESOURCE_NAMES.get(key, key)}: {value}" for key, value in balances.items())
-            body = "\n".join(lines)
-        elif action in ("buildings", "camps"):
-            from bot.database.models import ProductionLevel, CampLevel, SpecialCampLevel
-            from bot.game.engine import GENERAL_PRODUCTIONS, SPECIAL_PRODUCTIONS, GENERAL_CAMPS, SPECIAL_CAMPS
-            productions = (await session.scalars(select(ProductionLevel).where(ProductionLevel.castle_id == lord.castle_id).order_by(ProductionLevel.production_key))).all()
-            camps = (await session.scalars(select(CampLevel).where(CampLevel.castle_id == lord.castle_id).order_by(CampLevel.camp_key))).all()
-            special = (await session.scalars(select(SpecialCampLevel).where(SpecialCampLevel.castle_id == lord.castle_id).order_by(SpecialCampLevel.camp_key))).all()
-            lines = [f"🏰 {escape(castle.name) if castle else 'قلعه'}"]
-            if action == "buildings":
-                lines.append("🏗 ساختمان‌های تولید")
-                for row in productions:
-                    definition = GENERAL_PRODUCTIONS.get(row.production_key)
-                    if not definition:
-                        candidate = SPECIAL_PRODUCTIONS.get(castle.region, {}) if castle else {}
-                        definition = candidate if candidate.get("key") == row.production_key else None
-                    if definition:
-                        lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-            if action == "camps":
-                lines.append("⚔️ کمپ‌ها")
-                for row in camps:
-                    definition = GENERAL_CAMPS.get(row.camp_key)
-                    if definition:
-                        lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-                for row in special:
-                    definitions = SPECIAL_CAMPS.get(castle.region, []) if castle else []
-                    definition = next((item for item in definitions if item["key"] == row.camp_key), None)
-                    if definition:
-                        lines.append(f"{definition['label']}: سطح {row.level}/{definition['max']}")
-            body = "\n".join(lines)
-        elif action == "army":
-            from bot.database.models import ArmyUnit, EquipmentItem, FleetShip
-            army = (await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id == lord.castle_id).order_by(ArmyUnit.unit_key))).all()
-            equipment = (await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id == lord.castle_id).order_by(EquipmentItem.item_key))).all()
-            fleet = (await session.scalars(select(FleetShip).where(FleetShip.castle_id == lord.castle_id).order_by(FleetShip.ship_key))).all()
-            lines = [f"🛡 ارتش {castle.name if castle else ''}", "نیروها:"]
-            lines.extend(f"{row.unit_key}: {row.count:,}" for row in army)
-            lines.append("ادوات:")
-            lines.extend(f"{row.item_key}: {row.count:,}" for row in equipment)
-            lines.append("ناوگان:")
-            lines.extend(f"{row.ship_key}: {row.count:,}" for row in fleet)
-            body = "\n".join(lines)
-        elif action == "trade":
-            rows = (await session.scalars(select(TradeOffer).where(
-                (TradeOffer.recipient_lord_id == lord.id) & (TradeOffer.status == "pending")
-            ).order_by(TradeOffer.id.desc()).limit(10))).all()
-            body = "🤝 پیشنهادهای تجاری دریافتی"
-            if not rows:
-                body += "\nدر حال حاضر پیشنهاد معلقی نداری."
-            else:
-                for offer in rows:
-                    offered = offer.offered_assets or {offer.offered_resource: offer.offered_amount}
-                    requested = offer.requested_assets or {offer.requested_resource: offer.requested_amount}
-                    await call.message.answer(
-                        f"پیشنهاد #{offer.id}\nدریافت: {offered}\nپرداخت: {requested}",
-                        reply_markup=trade_decision(offer.id)
-                    )
-                body = "پیشنهادهای فعال با دکمه پذیرش/رد در پیام‌های بالا نمایش داده شدند."
-        elif action == "war":
-            from bot.database.models import WarExpedition
-            rows = (await session.scalars(select(WarExpedition).where(
-                WarExpedition.attacker_lord_id == lord.id
-            ).order_by(WarExpedition.id.desc()).limit(10))).all()
-            body = "🚩 آخرین لشکرکشی‌ها"
-            if rows:
-                body += "\n" + "\n".join(
-                    f"#{row.id} | مقصد قلعه {row.target_castle_id} | {row.status} | رسیدن: {row.arrival_at:%Y-%m-%d %H:%M}"
-                    for row in rows
-                )
-            else:
-                body += "\nهنوز لشکرکشی ثبت نشده است."
-        elif action == "help":
-            body = "ℹ️ راهنمای بازی\nاز دکمه‌های منو برای مشاهده پروفایل، ساختمان‌ها، کمپ‌ها، ارتش، تجارت و لشکرکشی استفاده کن. هر بخش اطلاعات واقعی قلعه و حساب متصل را نمایش می‌دهد."
-        else:
-            body = "بخش درخواستی در دسترس نیست."
-
-    await _safe_edit_text(call.message, body, reply_markup=section_back_menu())
 
 @router.message(F.text.regexp(r"(?i)^set lord$"))
 async def set_lord_reply(message: Message, session_factory):
@@ -201,33 +127,45 @@ async def set_lord_reply(message: Message, session_factory):
     async with session_factory() as session, session.begin():
         group = await get_group(session, message.chat.id)
         if not group:
-            await message.answer("این گروه هنوز به قلعه متصل نشده است."); return
+            await message.answer("این گروه هنوز به قلعه‌ای متصل نشده است.")
+            return
         target = message.reply_to_message.from_user
         try:
-            lord = await create_lord(session, target.id, target.full_name, target.username, cfg.bot_owner_id, group.castle_id)
-            await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id), f"castle_id={group.castle_id}; chat_id={message.chat.id}")
+            lord = await create_lord(
+                session, target.id, target.full_name, target.username,
+                cfg.bot_owner_id, group.castle_id
+            )
+            await audit(session, cfg.bot_owner_id, "lord_assigned", str(lord.id),
+                        f"castle_id={group.castle_id}; chat_id={message.chat.id}")
             castle = await session.get(Castle, group.castle_id)
         except ValueError as exc:
-            await message.answer(str(exc)); return
-    await message.answer(f"✅ لرد با موفقیت انتخاب شد.\n🏰 قلعه: {castle.name}\n👑 لرد: {target.full_name}")
+            await message.answer(str(exc))
+            return
+    await message.answer(
+        f"✅ لرد با موفقیت در دیتابیس مستقل ربات ثبت شد.\\n🏰 قلعه: {castle.name}\\n👑 لرد: {target.full_name}"
+    )
 
 @router.message(Command("registercastle"))
 async def register_castle(message: Message, session_factory):
     cfg = get_settings()
     if not message.from_user or message.from_user.id != cfg.bot_owner_id:
         await message.answer("فقط مالک اصلی می‌تواند گروه قلعه را ثبت کند."); return
-    # /registercastle Castle Name | Region | House
+    # /registercastle Castle Name | Region | House | sea|land
     raw = (message.text or "").partition(" ")[2]
     parts = [x.strip() for x in raw.split("|")]
-    if len(parts) != 3 or not all(parts):
-        await message.answer("فرمت: /registercastle نام قلعه | منطقه | خاندان"); return
+    if len(parts) != 4 or not all(parts):
+        await message.answer("فرمت: /registercastle نام قلعه | منطقه | خاندان | sea یا land"); return
+    coastal_value = parts[3].casefold()
+    if coastal_value not in {"sea", "coastal", "دریایی", "ساحلی", "land", "خشکی"}:
+        await message.answer("نوع موقعیت باید sea/دریایی یا land/خشکی باشد."); return
+    is_coastal = coastal_value in {"sea", "coastal", "دریایی", "ساحلی"}
     async with session_factory() as session, session.begin():
         try:
-            castle, _ = await create_castle_group(session, message.chat.id, message.chat.title or "Castle Group", parts[0], parts[1], parts[2], cfg.bot_owner_id)
+            castle, _ = await create_castle_group(session, message.chat.id, message.chat.title or "Castle Group", parts[0], parts[1], parts[2], cfg.bot_owner_id, is_coastal=is_coastal)
             await audit(session, cfg.bot_owner_id, "castle_group_registered", str(castle.id), f"chat_id={message.chat.id}")
         except ValueError as exc:
             await message.answer(str(exc)); return
-    await message.answer(f"✅ گروه به قلعه متصل شد.\n🏰 {castle.name}\n🗺 {castle.region}\n🏠 {castle.house}\nاکنون می‌توانی با Reply به بازیکن و دستور set lord، لرد را تعیین کنی.")
+    await message.answer(f"✅ گروه به قلعه متصل شد.\n🏰 {castle.name}\n🗺 {castle.region}\n🏠 {castle.house}\n🌊 موقعیت: {'دریایی/ساحلی' if castle.is_coastal else 'خشکی'}\nاکنون می‌توانی با Reply به بازیکن و دستور set lord، لرد را تعیین کنی.")
 
 @router.message(Command("profile"))
 async def profile(message: Message, session_factory):
@@ -283,9 +221,54 @@ async def offers(message: Message, session_factory):
         requested=offer.requested_assets or {offer.requested_resource:offer.requested_amount}
         await message.answer(f"پیشنهاد #{offer.id}: دریافت {offered}، پرداخت {requested}", reply_markup=trade_decision(offer.id))
 
+@router.message(Command("tradehistory"))
+async def trade_history_cmd(message: Message, session_factory):
+    async with session_factory() as session:
+        group = await require_registered_group(message, session)
+        if not group:
+            return
+        lord = await get_lord(session, message.from_user.id)
+        if not lord or lord.castle_id != group.castle_id:
+            await message.answer("در این گروه لرد نیستی.")
+            return
+        rows = (await session.scalars(
+            select(TradeOffer).where(
+                (TradeOffer.sender_lord_id == lord.id) |
+                (TradeOffer.recipient_lord_id == lord.id)
+            ).order_by(TradeOffer.id.desc()).limit(30)
+        )).all()
+        lords = (await session.scalars(
+            select(Lord).where(
+                Lord.id.in_({x.sender_lord_id for x in rows} | {x.recipient_lord_id for x in rows})
+            )
+        )).all() if rows else []
+        names = {x.id: x.display_name for x in lords}
+    if not rows:
+        await message.answer("هنوز سابقه تجارتی برایت ثبت نشده است.")
+        return
+    lines = ["📜 تاریخچه تجارت (۳۰ مورد آخر):"]
+    for offer in rows:
+        offered = offer.offered_assets or {offer.offered_resource: offer.offered_amount}
+        requested = offer.requested_assets or {offer.requested_resource: offer.requested_amount}
+        direction = "ارسالی" if offer.sender_lord_id == lord.id else "دریافتی"
+        lines.append(
+            f"#{offer.id} | {direction} | {names.get(offer.sender_lord_id, str(offer.sender_lord_id))} ↔ "
+            f"{names.get(offer.recipient_lord_id, str(offer.recipient_lord_id))}\n"
+            f"{offered} در برابر {requested} | وضعیت: {offer.status}"
+        )
+    await message.answer("\n\n".join(lines))
+
+
 @router.callback_query(F.data.startswith("trade:"))
 async def trade_callback(call: CallbackQuery, bot, session_factory):
-    _, action, offer_id = call.data.split(":")
+    parts = (call.data or "").split(":")
+    if len(parts) != 3 or parts[1] not in ("accept", "reject") or not parts[2].isdigit():
+        await call.answer("درخواست نامعتبر است.", show_alert=True)
+        return
+    _, action, offer_id = parts
+    if action not in ("accept", "reject"):
+        await call.answer("عملیات نامعتبر است.", show_alert=True)
+        return
     try:
         async with session_factory() as session, session.begin():
             recipient_before = await get_lord(session, call.from_user.id)
@@ -296,7 +279,14 @@ async def trade_callback(call: CallbackQuery, bot, session_factory):
             await audit(session, call.from_user.id, f"trade_{offer.status}", str(offer.id))
             sender = await session.get(Lord, offer.sender_lord_id)
             recipient = await session.get(Lord, offer.recipient_lord_id)
+            sender_group = await session.scalar(select(GroupRegistration).where(
+                GroupRegistration.castle_id == sender.castle_id,
+                GroupRegistration.enabled.is_(True),
+            ))
+            sender_chat_id = sender_group.telegram_chat_id if sender_group else None
         await call.message.edit_text(f"پیشنهاد #{offer.id}: {offer.status}")
+        if sender_chat_id and sender_chat_id != call.message.chat.id:
+            await bot.send_message(sender_chat_id, f"🤝 وضعیت پیشنهاد تجارت #{offer.id}: {offer.status}\\nمقصد: {recipient.display_name}")
         if offer.status == "completed" and get_settings().trade_log_chat_id:
             offered=offer.offered_assets or {offer.offered_resource:offer.offered_amount}
             requested=offer.requested_assets or {offer.requested_resource:offer.requested_amount}
@@ -304,6 +294,28 @@ async def trade_callback(call: CallbackQuery, bot, session_factory):
         await call.answer("انجام شد")
     except ValueError as exc:
         await call.answer(str(exc), show_alert=True)
+
+@router.message(Command("canceloffer"))
+async def cancel_own_trade_offer(message: Message, session_factory):
+    parts = (message.text or "").split()
+    if len(parts) != 2:
+        await message.answer("فرمت: /canceloffer شناسه_پیشنهاد")
+        return
+    try:
+        offer_id = int(parts[1])
+        async with session_factory() as session, session.begin():
+            group = await require_registered_group(message, session)
+            if not group:
+                return
+            lord = await get_lord(session, message.from_user.id)
+            if not lord or lord.castle_id != group.castle_id:
+                raise ValueError("در این گروه لرد نیستی.")
+            offer = await cancel_trade(session, offer_id, message.from_user.id)
+            await audit(session, message.from_user.id, "trade_offer_cancelled", str(offer.id))
+        await message.answer(f"پیشنهاد تجارت #{offer.id} لغو شد.")
+    except (ValueError, TypeError) as exc:
+        await message.answer(str(exc))
+
 
 @router.callback_query(F.data.startswith("admin:"))
 async def admin_menu_callback(call: CallbackQuery, session_factory):
@@ -337,7 +349,8 @@ async def admin_menu_callback(call: CallbackQuery, session_factory):
                 body = f"📊 <b>وضعیت جهان</b>\nساعت جهان: {'متوقف' if paused else 'فعال'}\n" + "\n".join(counts)
             elif action == "castles":
                 rows = (await session.scalars(select(Castle).order_by(Castle.region, Castle.name).limit(80))).all()
-                body = "🏰 <b>قلعه‌ها</b>\n" + ("\n".join(f"#{x.id} {escape(x.name)} | {escape(x.region)} | {escape(x.house)} | {'فعال' if x.active else 'غیرفعال'}" for x in rows) or "قلعه‌ای ثبت نشده است.")
+                registered_ids = set((await session.scalars(select(GroupRegistration.castle_id))).all())
+                body = "🏰 <b>فهرست قلعه‌های نقشه</b>\\n" + ("\\n".join(f"#{x.id} {escape(x.name)} | {escape(x.region)} | {escape(x.house)} | {'دریایی' if x.is_coastal else 'خشکی'} | {'گروه متصل' if x.id in registered_ids else 'بدون گروه'}" for x in rows) or "قلعه‌ای ثبت نشده است.")
             elif action == "lords":
                 rows = (await session.scalars(select(Lord).order_by(Lord.id.desc()).limit(80))).all()
                 body = "👑 <b>لردها</b>\n" + ("\n".join(f"#{x.id} {escape(x.display_name)} | تلگرام <code>{x.telegram_user_id}</code> | قلعه {x.castle_id} | {x.status}" for x in rows) or "لردی ثبت نشده است.")
@@ -356,7 +369,7 @@ async def admin_menu_callback(call: CallbackQuery, session_factory):
                 body = "🧾 <b>گزارش عملیات</b>\n" + ("\n".join(f"#{x.id} | {x.actor_telegram_id} | {escape(x.action)} | {escape(x.target_id or '-')}" for x in rows) or "گزارشی ثبت نشده است.")
             else:
                 body = ("🛠 <b>فرمان‌های مدیریتی</b>\n"
-                    "/registercastle نام | منطقه | خاندان — ثبت گروه قلعه\n"
+                    "/registercastle نام | منطقه | خاندان | sea یا land — ثبت گروه قلعه\n"
                     "Reply به پیام بازیکن + set lord — تعیین لرد\n"
                     "/setresource شناسه منبع مقدار — تغییر منابع\n"
                     "/setasset شناسه_قلعه نوع کلید مقدار — تغییر دارایی\n"
@@ -428,21 +441,112 @@ async def buildings_cmd(message: Message, session_factory):
     lines.append("\nارتقا: /upgrade production farm یا /upgrade camp swordsman")
     await message.answer("\n".join(lines))
 
+@router.callback_query(F.data.startswith("upgrade:"))
+async def upgrade_prompt(call: CallbackQuery, session_factory):
+    if not call.from_user or not call.message:
+        await call.answer()
+        return
+    parts = (call.data or "").split(":", 2)
+    if len(parts) != 3 or parts[1] not in ("production", "camp", "special_camp") or not parts[2]:
+        await call.answer("درخواست ارتقا نامعتبر است.", show_alert=True)
+        return
+    _, category, key = parts
+    async with session_factory() as session:
+        lord = await get_lord(session, call.from_user.id)
+        if not lord:
+            await call.answer("برای این حساب لردی ثبت نشده است.", show_alert=True)
+            return
+        group = await get_group(session, call.message.chat.id)
+        if not group or group.castle_id != lord.castle_id:
+            await call.answer("این عملیات فقط در گروه قلعه اختصاص‌یافته به لرد مجاز است.", show_alert=True)
+            return
+        castle = await session.get(Castle, lord.castle_id)
+        if category == "production":
+            definition = GENERAL_PRODUCTIONS.get(key) or (SPECIAL_PRODUCTIONS.get(castle.region) if SPECIAL_PRODUCTIONS.get(castle.region, {}).get("key") == key else None)
+            model, field = ProductionLevel, "production_key"
+        elif category == "camp":
+            definition = GENERAL_CAMPS.get(key)
+            model, field = CampLevel, "camp_key"
+        elif category == "special_camp":
+            definition = next((x for x in SPECIAL_CAMPS.get(castle.region, []) if x["key"] == key), None)
+            model, field = SpecialCampLevel, "camp_key"
+        else:
+            definition = None
+            model, field = ProductionLevel, "production_key"
+        if not definition:
+            await call.answer("این ارتقا برای قلعه تعریف نشده است.", show_alert=True)
+            return
+        row = await session.scalar(select(model).where(model.castle_id == lord.castle_id, getattr(model, field) == key))
+        level = int(row.level if row else 0)
+        if level >= int(definition.get("max", 0)):
+            await call.answer("این مورد به حداکثر سطح رسیده است.", show_alert=True)
+            return
+    cost = "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ تأیید ارتقا", callback_data=f"upgradeconfirm:{category}:{key}")],
+        [InlineKeyboardButton(text="❌ انصراف", callback_data="upgradecancel")],
+    ])
+    await _safe_edit_text(call.message, f"ارتقای {definition['label']}\\nسطح فعلی: {level}\\nسطح بعدی: {level+1}\\nهزینه: {cost}\\n\\nآیا تأیید می‌کنی؟", reply_markup=keyboard)
+    await call.answer()
+
+
+@router.callback_query(F.data == "upgradecancel")
+async def upgrade_cancel(call: CallbackQuery):
+    if call.message:
+        await _safe_edit_text(call.message, "عملیات ارتقا لغو شد.", reply_markup=section_back_menu())
+    await call.answer("لغو شد")
+
+
+@router.callback_query(F.data.startswith("upgradeconfirm:"))
+async def upgrade_confirm(call: CallbackQuery, session_factory):
+    if not call.from_user or not call.message:
+        await call.answer()
+        return
+    parts = (call.data or "").split(":", 2)
+    if len(parts) != 3 or parts[1] not in ("production", "camp", "special_camp") or not parts[2]:
+        await call.answer("درخواست ارتقا نامعتبر است.", show_alert=True)
+        return
+    _, category, key = parts
+    try:
+        async with session_factory() as session, session.begin():
+            lord = await get_lord(session, call.from_user.id)
+            if not lord:
+                raise ValueError("برای این حساب لردی ثبت نشده است.")
+            group = await get_group(session, call.message.chat.id)
+            if not group or group.castle_id != lord.castle_id:
+                raise ValueError("این عملیات فقط در گروه قلعه اختصاص‌یافته به لرد مجاز است.")
+            castle = await session.get(Castle, lord.castle_id)
+            level, definition = await engine_upgrade(session, lord, category, key)
+            await audit(session, call.from_user.id, "building_upgraded", str(lord.castle_id), f"{category}:{key}:{level}")
+        cost = "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()) or "بدون هزینه"
+        await _safe_edit_text(call.message, f"✅ {definition['label']} به سطح {level} ارتقا یافت.\\nهزینه: {cost}", reply_markup=section_back_menu())
+        await call.answer("ارتقا انجام شد")
+    except ValueError as exc:
+        await call.answer(str(exc), show_alert=True)
+
+
 @router.message(Command("upgrade"))
 async def upgrade_cmd(message: Message, session_factory):
     parts=(message.text or "").split()
     if len(parts)!=3 or parts[1] not in ("production","camp","special_camp"):
-        await message.answer("فرمت: /upgrade production farm\nیا /upgrade camp swordsman\nیا /upgrade special_camp ranger"); return
+        await message.answer("فرمت: /upgrade production farm\\nیا /upgrade camp swordsman\\nیا /upgrade special_camp ranger")
+        return
     async with session_factory() as session, session.begin():
         group=await get_group(session,message.chat.id)
-        if not group: await message.answer("این گروه به قلعه متصل نیست."); return
+        if not group:
+            await message.answer("این گروه به قلعه متصل نیست.")
+            return
         lord=await get_lord(session,message.from_user.id)
-        if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی."); return
+        if not lord or lord.castle_id!=group.castle_id:
+            await message.answer("در این گروه لرد نیستی.")
+            return
         try:
             level,definition=await engine_upgrade(session,lord,parts[1],parts[2])
             await audit(session,message.from_user.id,"building_upgraded",str(lord.castle_id),f"{parts[1]}:{parts[2]}:{level}")
-        except ValueError as e: await message.answer(str(e)); return
-    await message.answer(f"✅ {definition['label']} به سطح {level} ارتقا یافت.\nهزینه: " + "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()))
+        except ValueError as exc:
+            await message.answer(str(exc))
+            return
+    await message.answer(f"✅ {definition['label']} به سطح {level} ارتقا یافت.\\nهزینه: " + "، ".join(f"{RESOURCE_LABELS.get(k,k)} {v}" for k,v in definition.get("cost",{}).items()))
 
 @router.message(Command("army"))
 async def army_cmd(message: Message, session_factory):
@@ -615,7 +719,18 @@ async def alliances_cmd(message: Message, session_factory):
         if not group:return
         lord=await get_lord(session,message.from_user.id)
         if not lord or lord.castle_id!=group.castle_id: await message.answer("در این گروه لرد نیستی.");return
-        rows=(await session.scalars(select(MilitaryAlliance).where(MilitaryAlliance.owner_b_lord_id==lord.id,MilitaryAlliance.status=="pending"))).all()
+        candidates=(await session.scalars(select(MilitaryAlliance).where(
+            MilitaryAlliance.status=="pending",
+            (MilitaryAlliance.owner_a_lord_id==lord.id) | (MilitaryAlliance.owner_b_lord_id==lord.id)
+        ))).all()
+        rows=[]
+        for item in candidates:
+            expedition=await session.get(WarExpedition,item.war_expedition_id) if item.war_expedition_id else None
+            if not expedition:
+                continue
+            target_owner_id=item.owner_a_lord_id if item.castle_a_id==expedition.target_castle_id else item.owner_b_lord_id
+            if target_owner_id==lord.id:
+                rows.append(item)
     if not rows: await message.answer("درخواست اتحاد معلقی نداری.");return
     await message.answer("درخواست‌ها:\n"+"\n".join(f"#{x.id}: /alliance {x.id} accept یا /alliance {x.id} reject" for x in rows))
 
@@ -766,7 +881,8 @@ async def admin_castles_cmd(message: Message, session_factory):
         await message.answer("دسترسی مدیریتی فعال نیست.");return
     async with session_factory() as session:
         rows=(await session.scalars(select(Castle).order_by(Castle.region,Castle.name))).all()
-    await message.answer("قلعه‌های ثبت‌شده:\n"+"\n".join(f"#{x.id} {x.name} | {x.region} | {x.house} | {'فعال' if x.active else 'غیرفعال'}" for x in rows) if rows else "قلعه‌ای ثبت نشده است.")
+        registered_ids=set((await session.scalars(select(GroupRegistration.castle_id))).all())
+    await message.answer("فهرست قلعه‌های نقشه:\\n"+"\\n".join(f"#{x.id} {x.name} | {x.region} | {x.house} | {'دریایی' if x.is_coastal else 'خشکی'} | {'گروه متصل' if x.id in registered_ids else 'بدون گروه'}" for x in rows) if rows else "قلعه‌ای ثبت نشده است.")
 
 @router.message(Command("garrisons"))
 async def garrisons_cmd(message: Message, session_factory):
@@ -843,7 +959,7 @@ async def admin_help_cmd(message: Message):
         "/setresource شناسه_تلگرام منبع مقدار — تغییر موجودی هر لرد\n"
         "/setasset شناسه_قلعه نوع کلید مقدار — ویرایش دارایی قلعه\n"
         "/setlordcastle شناسه_تلگرام شناسه_قلعه — جابه‌جایی لرد\n"
-        "/setcastleinfo شناسه نام | منطقه | خاندان — ویرایش مشخصات قلعه\\n"
+        "/setcastleinfo شناسه نام | منطقه | خاندان — ویرایش مشخصات قلعه (نوع ساحلی در ثبت تعیین می‌شود)\n"
         "/setlordstatus شناسه active|suspended|deleted — مدیریت وضعیت لرد\\n"
         "/canceltrade شناسه — لغو معامله معلق\\n"
         "/adminlogs — آخرین گزارش‌های مدیریتی"
@@ -931,6 +1047,8 @@ async def admin_set_asset_cmd(message: Message, session_factory, bot):
             castle = await session.get(Castle, castle_id)
             if not castle:
                 raise ValueError("قلعه پیدا نشد.")
+            if kind == "fleet" and amount > 0 and not castle.is_coastal:
+                raise ValueError("قلعه خشکی امکان داشتن یا دریافت کشتی ندارد.")
             condition = getattr(model, key_field) == key
             row = await session.scalar(select(model).where(model.castle_id == castle_id, condition).with_for_update())
             before = getattr(row, value_field) if row else 0
@@ -958,6 +1076,9 @@ async def admin_set_lord_castle_cmd(message: Message, session_factory, bot):
     try:
         telegram_id, castle_id = int(parts[1]), int(parts[2])
         async with session_factory() as session, session.begin():
+            from bot.game.controls import get_controls
+            if not (await get_controls(session))["castle_selection_open"]:
+                raise ValueError("تخصیص یا انتقال لرد به قلعه در حال حاضر قفل است.")
             lord = await session.scalar(select(Lord).where(Lord.telegram_user_id == telegram_id).with_for_update())
             castle = await session.get(Castle, castle_id)
             if not lord or not castle:
@@ -1053,3 +1174,44 @@ async def admin_cancel_trade_cmd(message: Message, session_factory, bot):
         await message.answer(f"معامله #{offer_id} لغو شد.")
     except (ValueError, TypeError) as exc:
         await message.answer(str(exc))
+
+
+# Interactive inline workflows are isolated from the legacy command handlers.
+from bot.handlers.ui import router as ui_router
+router.include_router(ui_router)
+
+
+@router.errors()
+async def unhandled_update_error(event):
+    """Never leave Telegram callback buttons spinning when a handler crashes.
+
+    Keep the full traceback in the bot log so the underlying failure can be
+    fixed from evidence instead of silently swallowing callback exceptions.
+    """
+    import logging
+
+    error = event.exception
+    logging.error(
+        "Unhandled Telegram update error",
+        exc_info=(type(error), error, error.__traceback__),
+    )
+
+    update = event.update
+    callback = getattr(update, "callback_query", None)
+    if callback:
+        try:
+            await callback.answer(
+                "خطای داخلی هنگام اجرای این دکمه رخ داد. لطفاً دوباره تلاش کن؛ جزئیات خطا در گزارش اجرای ربات ثبت شد.",
+                show_alert=True,
+            )
+        except Exception:
+            logging.exception("Could not acknowledge failed callback query")
+        return True
+
+    message = getattr(update, "message", None)
+    if message:
+        try:
+            await message.answer("خطای داخلی هنگام اجرای درخواست رخ داد. جزئیات خطا در گزارش اجرای ربات ثبت شد.")
+        except Exception:
+            logging.exception("Could not send update error message")
+    return True

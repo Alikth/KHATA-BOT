@@ -24,7 +24,7 @@ def admin_menu():
     """Default owner control center shown by /start in the configured admin group."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏸ توقف جهان", callback_data="admin:pause"),
-         InlineKeyboardButton(text="▶️ ادامه جهان", callback_data="admin:resume")],
+         InlineKeyboardButton(text="▶️ شروع / ادامه بازی", callback_data="admin:resume")],
         [InlineKeyboardButton(text="📊 وضعیت جهان", callback_data="admin:status")],
         [InlineKeyboardButton(text="🏰 قلعه‌ها", callback_data="admin:castles"),
          InlineKeyboardButton(text="👑 لردها", callback_data="admin:lords")],
@@ -33,6 +33,13 @@ def admin_menu():
         [InlineKeyboardButton(text="📜 سناریوها", callback_data="admin:scenarios"),
          InlineKeyboardButton(text="🧾 گزارش‌ها", callback_data="admin:logs")],
         [InlineKeyboardButton(text="🛠 راهنمای مدیریت", callback_data="admin:commands")],
+        [InlineKeyboardButton(text="📦 اعمال تولید هفتگی", callback_data="adminui:weekly")],
+        [InlineKeyboardButton(text="🔒/🔓 قفل لشکرکشی", callback_data="adminui:toggle:expeditions"),
+         InlineKeyboardButton(text="🔒/🔓 قفل تجارت", callback_data="adminui:toggle:trades")],
+        [InlineKeyboardButton(text="🏰 قفل انتخاب قلعه", callback_data="adminui:toggle:castle")],
+        [InlineKeyboardButton(text="⏱ تنظیم مهلت‌ها", callback_data="adminui:deadlines")],
+        [InlineKeyboardButton(text="↩️ گزارش و بازگردانی تجارت", callback_data="adminui:trades")],
+        [InlineKeyboardButton(text="⬆️ بازگشت به بالای پنل", callback_data="adminui:home")],
     ])
 
 

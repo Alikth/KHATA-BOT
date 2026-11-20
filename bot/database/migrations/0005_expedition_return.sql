@@ -1,0 +1,5 @@
+BEGIN;
+ALTER TABLE war_expeditions
+    ADD COLUMN IF NOT EXISTS return_after_arrival BOOLEAN NOT NULL DEFAULT FALSE;
+INSERT INTO schema_version(version) VALUES (5) ON CONFLICT DO NOTHING;
+COMMIT;

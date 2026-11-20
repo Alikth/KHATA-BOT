@@ -1,7 +1,10 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from bot.config import get_settings
 from bot.database.base import Base
@@ -29,8 +32,13 @@ async def main():
             else:
                 # Deliberately discard offline wall-clock time: the world pauses while the host is off.
                 await advance_world_clock(session, reset_real_tick=True)
-    bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher()
+    telegram_session = AiohttpSession(proxy=cfg.telegram_proxy) if cfg.telegram_proxy else None
+    bot = Bot(
+        cfg.bot_token,
+        session=telegram_session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(handlers.router)
     dp["session_factory"] = session_factory
     async def war_arrival_worker():
@@ -46,10 +54,19 @@ async def main():
                         origin=await session.get(Castle,row.origin_castle_id)
                         target=await session.get(Castle,row.target_castle_id)
                         groups=(await session.scalars(select(GroupRegistration).where(GroupRegistration.castle_id.in_([row.origin_castle_id,row.target_castle_id]),GroupRegistration.enabled.is_(True)))).all()
-                        text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nمهاجم باید دستور بعدی را ثبت کند."
-                        notices.extend((g.telegram_chat_id,text) for g in groups)
-                for chat_id,notice in notices:
-                    try: await bot.send_message(chat_id,notice)
+                        for group in groups:
+                            if row.asset_origin=="fake":
+                                text=f"🎭 لشکرکشی نمایشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nهیچ دارایی جابه‌جا یا کسر نشد."
+                                markup=None
+                            elif group.castle_id==row.origin_castle_id:
+                                text=f"⚔️ لشکرکشی #{row.id} به مقصد رسید\n{origin.name} → {target.name}\nدستور بعدی را انتخاب کن."
+                                markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ حمله / محاصره / اردوگاه",callback_data=f"ui:arrival:{row.id}")]])
+                            else:
+                                text=f"⚠️ لشکر #{row.id} از {origin.name} به قلعه {target.name} رسید."
+                                markup=None
+                            notices.append((group.telegram_chat_id,text,markup))
+                for chat_id,notice,markup in notices:
+                    try: await bot.send_message(chat_id,notice,reply_markup=markup)
                     except Exception: logging.exception("Could not publish war arrival to chat %s",chat_id)
             except Exception:
                 logging.exception("War arrival worker failed")
