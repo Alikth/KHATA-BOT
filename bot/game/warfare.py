@@ -69,8 +69,10 @@ async def launch_expedition(session: AsyncSession, lord: Lord, target_castle_nam
     if expedition_type=="sea":
         origin_economy=await session.get(CastleEconomyState,origin.id)
         target_economy=await session.get(CastleEconomyState,target.id)
-        if not origin_economy or not origin_economy.port_enabled: raise ValueError("قلعه مبدأ بندر فعال ندارد.")
-        if not target_economy or not target_economy.port_enabled: raise ValueError("قلعه مقصد بندر فعال ندارد؛ مسیر دریایی فقط بین دو قلعه بندردار مجاز است.")
+        if not origin.is_coastal or not origin_economy or not origin_economy.port_enabled:
+            raise ValueError("قلعه مبدأ ساحلی/دریایی نیست یا بندر فعالی ندارد.")
+        if not target.is_coastal or not target_economy or not target_economy.port_enabled:
+            raise ValueError("قلعه مقصد ساحلی/دریایی نیست یا بندر فعالی ندارد؛ مسیر دریایی فقط بین دو قلعه دریایی مجاز است.")
     clean={k:{} for k in ("army","equipment","fleet")}
     for kind in ("army","equipment","fleet"):
         if expedition_type=="land" and kind=="fleet": continue
