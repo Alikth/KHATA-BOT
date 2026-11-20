@@ -13,7 +13,7 @@ from bot.config import get_settings
 from bot.database.models import (
     Lord, Castle, GroupRegistration, ResourceBalance, TradeOffer, GameSetting,
     ProductionLevel, CampLevel, SpecialCampLevel, ArmyUnit, EquipmentItem,
-    FleetShip, CastleEconomyState, WarExpedition, WarScenario, AdminAuditLog,
+    FleetShip, CastleEconomyState, WarExpedition, WarScenario, AdminAuditLog, GarrisonAsset,
 )
 from bot.services import get_lord, get_group, get_balances, create_trade_bundle, audit, RESOURCE_NAMES
 from bot.game.engine import (
@@ -83,6 +83,25 @@ def _format_available(available):
     equipment=", ".join(f"{EQUIPMENT_LABELS.get(k,k)} [{k}]={v}" for k,v in available.get("equipment",{}).items()) or "ندارد"
     fleet=", ".join(f"{FLEET_LABELS.get(k,k)} [{k}]={v}" for k,v in available.get("fleet",{}).items()) or "ندارد"
     return f"ارتش: {army}\nادوات: {equipment}\nناوگان: {fleet}"
+
+
+def _castle_region_order(castle):
+    regions = {item.get("region"): index for index, item in enumerate(CATALOG.get("houses", []))}
+    return (regions.get(castle.region, 999), castle.name.casefold())
+
+
+def _castle_selection_keyboard(castles, callback_prefix, cancel_callback="menu:war"):
+    region_icons = {item.get("region"): item.get("icon", "🏰") for item in CATALOG.get("houses", [])}
+    ordered = sorted(castles, key=_castle_region_order)
+    rows = [
+        [InlineKeyboardButton(
+            text=f"{region_icons.get(castle.region, '🏰')} {castle.region} · {castle.name}",
+            callback_data=f"{callback_prefix}:{castle.id}",
+        )]
+        for castle in ordered
+    ]
+    rows.append([InlineKeyboardButton(text="لغو", callback_data=cancel_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def _parse_quantities(raw):
     result = {}
@@ -342,29 +361,81 @@ async def ui_callback(call: CallbackQuery, session_factory, state: FSMContext, b
         if action=="war" and len(parts)==3 and parts[2] in ("new","fake","sea"):
             kind="sea" if parts[2]=="sea" else "land"
             async with session_factory() as session:
-                lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
+                lord,player_castle=await _player(session,call.from_user.id,call.message.chat.id)
+                garrison_ids=set((await session.scalars(
+                    select(GarrisonAsset.castle_id).where(
+                        GarrisonAsset.owner_lord_id==lord.id,GarrisonAsset.count>0
+                    ).distinct()
+                )).all())
+                eligible_ids=garrison_ids | {lord.castle_id}
+                origin_query=select(Castle).where(Castle.active.is_(True),Castle.id.in_(eligible_ids))
                 if kind=="sea":
-                    econ=await session.get(CastleEconomyState,castle.id)
-                    if not econ or not econ.port_enabled: raise ValueError("این قلعه بندر فعال ندارد.")
-                target_query=select(Castle).where(Castle.active.is_(True),Castle.id!=castle.id)
-                if kind=="sea":
-                    target_query=target_query.join(CastleEconomyState,CastleEconomyState.castle_id==Castle.id).where(CastleEconomyState.port_enabled.is_(True))
-                targets=(await session.scalars(target_query.order_by(Castle.name))).all()
+                    origin_query=origin_query.where(Castle.is_coastal.is_(True)).join(
+                        CastleEconomyState,CastleEconomyState.castle_id==Castle.id
+                    ).where(CastleEconomyState.port_enabled.is_(True))
+                origins=(await session.scalars(origin_query)).all()
+            if not origins:
+                raise ValueError("هیچ قلعه مبدأ مجاز با دارایی قابل اعزام پیدا نشد.")
             await state.update_data(war_type=kind,war_fake=parts[2]=="fake")
-            kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🏰 {c.name}",callback_data=f"ui:war:target:{c.id}")] for c in targets]+[[InlineKeyboardButton(text="لغو",callback_data="menu:war")]])
-            await call.message.edit_text(f"قلعه مبدأ: {castle.name}\\nقلعه مقصد را انتخاب کن:",reply_markup=kb); await call.answer(); return
-        if action=="war" and len(parts)==4 and parts[2]=="target":
+            kb=_castle_selection_keyboard(origins,"ui:war:origin")
+            await call.message.edit_text("اقلیم و قلعه مبدأ را انتخاب کن:",reply_markup=kb); await call.answer(); return
+        if action=="war" and len(parts)==4 and parts[2]=="origin":
+            origin_id=int(parts[3])
+            data=await state.get_data()
+            kind=data.get("war_type")
+            if kind not in ("land","sea"): raise ValueError("فرایند لشکرکشی منقضی شده است؛ دوباره شروع کن.")
             async with session_factory() as session:
-                lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
+                lord,player_castle=await _player(session,call.from_user.id,call.message.chat.id)
+                origin=await session.get(Castle,origin_id)
+                if not origin or not origin.active: raise ValueError("قلعه مبدأ معتبر نیست.")
+                use_garrison=origin.id!=lord.castle_id
+                if use_garrison:
+                    garrison=(await session.scalars(select(GarrisonAsset).where(
+                        GarrisonAsset.castle_id==origin.id,GarrisonAsset.owner_lord_id==lord.id,GarrisonAsset.count>0
+                    ))).all()
+                    available={"army":{},"equipment":{},"fleet":{}}
+                    for item in garrison:
+                        if item.asset_kind in available:
+                            available[item.asset_kind][item.asset_key]=int(item.count)
+                else:
+                    army=(await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id==origin.id))).all()
+                    gear=(await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id==origin.id))).all()
+                    fleet=(await session.scalars(select(FleetShip).where(FleetShip.castle_id==origin.id))).all()
+                    available={"army":{r.unit_key:r.count for r in army},"equipment":{r.item_key:r.count for r in gear},"fleet":{r.ship_key:r.count for r in fleet}}
+                if kind=="sea":
+                    econ=await session.get(CastleEconomyState,origin.id)
+                    if not origin.is_coastal or not econ or not econ.port_enabled:
+                        raise ValueError("قلعه مبدأ برای لشکرکشی دریایی مجاز نیست.")
+                target_query=select(Castle).where(Castle.active.is_(True),Castle.id!=origin.id)
+                if kind=="sea":
+                    target_query=target_query.where(Castle.is_coastal.is_(True)).join(
+                        CastleEconomyState,CastleEconomyState.castle_id==Castle.id
+                    ).where(CastleEconomyState.port_enabled.is_(True))
+                targets=(await session.scalars(target_query)).all()
+            if not targets: raise ValueError("هیچ قلعه مقصد مجازی پیدا نشد.")
+            await state.update_data(war_origin_id=origin.id,war_origin_name=origin.name,
+                                    war_use_garrison=use_garrison,war_available=available)
+            kb=_castle_selection_keyboard(targets,"ui:war:target")
+            await call.message.edit_text(f"مبدأ: {origin.name}\\nاقلیم و قلعه مقصد را انتخاب کن:",reply_markup=kb); await call.answer(); return
+        if action=="war" and len(parts)==4 and parts[2]=="target":
+            data=await state.get_data()
+            kind=data.get("war_type")
+            async with session_factory() as session:
+                lord,player_castle=await _player(session,call.from_user.id,call.message.chat.id)
                 target=await session.get(Castle,int(parts[3]))
-                if not target or not target.active: raise ValueError("مقصد معتبر نیست.")
-                army=(await session.scalars(select(ArmyUnit).where(ArmyUnit.castle_id==castle.id))).all()
-                gear=(await session.scalars(select(EquipmentItem).where(EquipmentItem.castle_id==castle.id))).all()
-                fleet=(await session.scalars(select(FleetShip).where(FleetShip.castle_id==castle.id))).all()
-                available={"army":{r.unit_key:r.count for r in army},"equipment":{r.item_key:r.count for r in gear},"fleet":{r.ship_key:r.count for r in fleet}}
-            await state.update_data(war_target=target.name,war_available=available)
+                origin=await session.get(Castle,int(data.get("war_origin_id") or 0))
+                if not target or not target.active or not origin:
+                    raise ValueError("مبدأ یا مقصد معتبر نیست؛ فرایند را دوباره شروع کن.")
+                if target.id==origin.id: raise ValueError("قلعه مقصد نمی‌تواند همان قلعه مبدأ باشد.")
+                if kind=="sea":
+                    econ=await session.get(CastleEconomyState,target.id)
+                    if not target.is_coastal or not econ or not econ.port_enabled:
+                        raise ValueError("مقصد برای لشکرکشی دریایی ساحلی نیست یا بندر فعال ندارد.")
+                elif kind!="land":
+                    raise ValueError("نوع لشکرکشی نامعتبر است.")
+            await state.update_data(war_target=target.name)
             await state.set_state(UIFlow.war_assets)
-            await call.message.edit_text("نیرو و ادوات را وارد کن. نمونه: army:swordsman=100,archer=20;equipment:ladder=2\nموجودی قابل اعزام:\n"+_format_available(available))
+            await call.message.edit_text("نیرو و ادوات را وارد کن. نمونه: army:swordsman=100,archer=20;equipment:ladder=2\\nمبدأ: "+escape(origin.name)+"\\nموجودی قابل اعزام:\\n"+_format_available(data["war_available"]))
             await call.answer(); return
         if action=="arrival" and len(parts)==3:
             expedition_id=int(parts[2])
@@ -508,6 +579,7 @@ async def war_assets_input(message:Message,state:FSMContext):
             for key,count in items.items():
                 if count>int(available.get(kind,{}).get(key,0)): raise ValueError(f"موجودی {key} کافی نیست.")
         if data.get("war_type")=="land" and assets["fleet"]: raise ValueError("در لشکرکشی زمینی نمی‌توان کشتی انتخاب کرد.")
+        if data.get("war_type")=="sea" and not assets["fleet"]: raise ValueError("برای لشکرکشی دریایی باید حداقل یک کشتی انتخاب کنی.")
         await state.update_data(war_assets=assets)
         await state.set_state(UIFlow.war_duration)
         await message.answer("مدت سفر را به شکل ساعت:دقیقه وارد کن؛ نمونه 1:30. عدد دقیقه هم پذیرفته می‌شود.")
@@ -548,8 +620,9 @@ async def war_final(call:CallbackQuery,state:FSMContext,session_factory,bot):
         async with session_factory() as session,session.begin():
             lord,castle=await _player(session,call.from_user.id,call.message.chat.id)
             fake=bool(data.get("war_fake"))
-            row=await launch_expedition(session,lord,data["war_target"],data["war_type"],int(data["war_duration"]),data["war_assets"],lord_present=lord_present,fake=fake,return_after_arrival=return_after)
+            row=await launch_expedition(session,lord,data["war_target"],data["war_type"],int(data["war_duration"]),data["war_assets"],lord_present=lord_present,fake=fake,return_after_arrival=return_after,use_garrison=bool(data.get("war_use_garrison")),source_castle_id=int(data.get("war_origin_id") or castle.id))
             await audit(session,call.from_user.id,"fake_expedition_created" if fake else "war_expedition_launched",str(row.id))
+            origin=await session.get(Castle,row.origin_castle_id)
             target=await session.get(Castle,row.target_castle_id)
         await state.clear()
         await call.message.edit_text(f"🚩 لشکرکشی #{row.id} ثبت شد\n{castle.name} → {target.name}\nرسیدن برآوردی: {row.arrival_at:%Y-%m-%d %H:%M UTC}\n{'نمایشی؛ دارایی کسر نشد.' if fake else 'دارایی‌ها از موجودی مبدأ کسر شدند.'}")
